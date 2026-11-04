@@ -181,10 +181,11 @@ fn handle_exact_or_pattern(
                     "ind".to_string()
                 }
             });
+            let host = std::env::var("FO3_HTTP_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
             Some(json!({
                 "result": true,
                 "language": lang,
-                "url": format!("https://APSEODESK172/{}", CDN_PREFIX)
+                "url": format!("https://{}/{}", host, CDN_PREFIX)
             }))
         }
         "/info/server/time" => Some(json!({

@@ -25,6 +25,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         });
     }
 
+    if tls && port != 8080 {
+        tokio::spawn(async move {
+            if let Err(e) = fo3_server::http::server::run_http_server(8080, false).await {
+                eprintln!("[http_config] http (port 8080) error: {}", e);
+            }
+        });
+    }
+
     tokio::select! {
         res = fo3_server::http::server::run_http_server(port, tls) => {
             if let Err(e) = res {
