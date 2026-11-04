@@ -224,7 +224,7 @@ fn build_coach_me(st: &mut Value, slot: usize) -> Value {
         state::my_coach(st).clone()
     };
 
-    let team = st
+    let mut team = st
         .get("teams")
         .and_then(|t| t.get(&slot.to_string()))
         .cloned()
@@ -232,6 +232,11 @@ fn build_coach_me(st: &mut Value, slot: usize) -> Value {
 
     let ep = coach.get("ep").and_then(|v| v.as_i64()).unwrap_or(state::START_EP);
     let teamid = coach.get("teamid").and_then(|v| v.as_u64()).unwrap_or(1);
+
+    if team.get("players").and_then(|p| p.as_array()).map(|a| a.is_empty()).unwrap_or(true) {
+        team = state::get_default_team(teamid);
+    }
+
     let cid = coach
         .get("_id")
         .and_then(|v| v.as_str())
@@ -261,6 +266,23 @@ fn build_coach_me(st: &mut Value, slot: usize) -> Value {
         "kickers": ["", "", "", "", ""],
         "captain": ""
     }));
+
+    if team.get("captain").is_none() || team["captain"].as_str().map(|s| s.is_empty()).unwrap_or(true) {
+        if let Some(cap) = squad_val.get("captain") {
+            team["captain"] = cap.clone();
+        }
+    }
+    if team.get("kickers").is_none() || team["kickers"].as_array().map(|a| a.is_empty()).unwrap_or(true) {
+        if let Some(k) = squad_val.get("kickers") {
+            team["kickers"] = k.clone();
+        }
+    }
+    if team.get("presetidx").is_none() {
+        team["presetidx"] = json!(0);
+    }
+    if team.get("formations").is_none() {
+        team["formations"] = json!([]);
+    }
 
     json!({
         "result": true,

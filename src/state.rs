@@ -88,8 +88,96 @@ pub fn new_iid() -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
+pub fn get_default_team(teamid: u64) -> Value {
+    let candidate_paths = [
+        format!("responses/static_info_authentic_team_all_{}.json", teamid),
+        format!(r"C:\Users\ngnsusinn\Documents\fifa-online-3-server
+esponses\static_info_authentic_team_all_{}.json", teamid),
+    ];
+    let mut team = json!({});
+    for path in &candidate_paths {
+        if let Ok(data) = fs::read_to_string(path) {
+            if let Ok(v) = serde_json::from_str::<Value>(&data) {
+                if let Some(t) = v.get("team") {
+                    team = t.clone();
+                    break;
+                }
+            }
+        }
+    }
+
+    if team.get("players").is_none() || team["players"].as_array().map(|a| a.is_empty()).unwrap_or(true) {
+        return json!({
+            "teamid": teamid,
+            "players": [],
+            "squad": {"captain": "", "kickers": ["", "", "", "", ""], "positions": []},
+            "captain": "",
+            "kickers": ["", "", "", "", ""],
+            "presetidx": 0,
+            "formations": []
+        });
+    }
+
+    let mut players = team.get("players").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    for p in &mut players {
+        let spid = p.get("spid").and_then(|v| v.as_u64()).unwrap_or(0);
+        let id_str = spid.to_string();
+        if let Some(obj) = p.as_object_mut() {
+            obj.insert("_id".to_string(), json!(id_str));
+            obj.insert("id".to_string(), json!(id_str));
+            obj.insert("state".to_string(), json!("first"));
+            obj.insert("grade".to_string(), json!(0));
+            obj.insert("life".to_string(), json!(100));
+            obj.insert("levelinfo".to_string(), json!({"level": 1, "exp": 0, "need": 100}));
+            if !obj.contains_key("price") {
+                obj.insert("price".to_string(), json!(10000));
+            }
+        }
+    }
+
+    let mut squad = team.get("squad").cloned().unwrap_or(json!({}));
+    let mut cap_str = String::new();
+    let mut kick_arr = Vec::new();
+
+    if let Some(sq_obj) = squad.as_object_mut() {
+        if let Some(positions) = sq_obj.get_mut("positions").and_then(|v| v.as_array_mut()) {
+            for pos in positions {
+                let spid = pos.get("spid").and_then(|v| v.as_u64()).unwrap_or(0);
+                if let Some(pos_obj) = pos.as_object_mut() {
+                    pos_obj.insert("id".to_string(), json!(spid.to_string()));
+                }
+            }
+        }
+        if let Some(cap) = sq_obj.get("captain").and_then(|v| v.as_u64()) {
+            cap_str = cap.to_string();
+            sq_obj.insert("captain".to_string(), json!(cap_str));
+        } else if let Some(cap) = sq_obj.get("captain").and_then(|v| v.as_str()) {
+            cap_str = cap.to_string();
+        }
+        if let Some(kickers) = sq_obj.get_mut("kickers").and_then(|v| v.as_array_mut()) {
+            for k in kickers {
+                if let Some(kid) = k.as_u64() {
+                    let s = kid.to_string();
+                    kick_arr.push(json!(s.clone()));
+                    *k = json!(s);
+                } else if let Some(ks) = k.as_str() {
+                    kick_arr.push(json!(ks));
+                }
+            }
+        }
+    }
+
+    team["players"] = Value::Array(players);
+    team["squad"] = squad;
+    team["captain"] = json!(cap_str);
+    team["kickers"] = Value::Array(kick_arr);
+    team["presetidx"] = json!(0);
+    team
+}
+
 pub fn default_state() -> Value {
     let coach_id = "000000000000000000000001";
+    let default_team = get_default_team(1);
     json!({
         "coaches": [
             {
@@ -110,14 +198,7 @@ pub fn default_state() -> Value {
         ],
         "defaultcoachid": coach_id,
         "teams": {
-            "0": {
-                "players": [],
-                "squad": {
-                    "positions": [],
-                    "kickers": ["", "", "", "", ""],
-                    "captain": ""
-                }
-            }
+            "0": default_team
         },
         "cups": {}
     })
@@ -125,7 +206,27 @@ pub fn default_state() -> Value {
 
 pub fn load_state() -> Value {
     if let Ok(content) = fs::read_to_string(STATE_PATH) {
-        if let Ok(v) = serde_json::from_str(&content) {
+        if let Ok(mut v) = serde_json::from_str::<Value>(&content) {
+            let need_populate = v.get("teams")
+                .and_then(|t| t.get("0"))
+                .and_then(|t0| t0.get("players"))
+                .and_then(|p| p.as_array())
+                .map(|arr| arr.is_empty())
+                .unwrap_or(true);
+            if need_populate {
+                let teamid = v.get("coaches")
+                    .and_then(|c| c.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|c0| c0.get("teamid"))
+                    .and_then(|t| t.as_u64())
+                    .unwrap_or(1);
+                let default_team = get_default_team(teamid);
+                if v.get("teams").is_none() {
+                    v["teams"] = json!({});
+                }
+                v["teams"]["0"] = default_team;
+                let _ = save_state(&v);
+            }
             return v;
         }
     }
