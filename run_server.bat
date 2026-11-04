@@ -2,9 +2,23 @@
 title FO3 Private Server (Rust)
 cd /d "%~dp0"
 
+rem Language & Region configuration (default: eng / SG)
+if not "%~1"=="" set FO3_LANGUAGE=%~1
+if "%FO3_LANGUAGE%"=="" set FO3_LANGUAGE=eng
+
+if /I "%FO3_LANGUAGE%"=="eng" (
+    if "%FO3_REGION%"=="" set FO3_REGION=SG
+) else if /I "%FO3_LANGUAGE%"=="vie" (
+    if "%FO3_REGION%"=="" set FO3_REGION=VN
+) else if /I "%FO3_LANGUAGE%"=="ind" (
+    if "%FO3_REGION%"=="" set FO3_REGION=ID
+)
+
 echo ========================================================
 echo   FIFA Online 3 Private Server (Rust)
 echo.
+echo   - Language:         %FO3_LANGUAGE%
+echo   - Region:           %FO3_REGION%
 echo   - HTTPS API ^& CDN:  https://127.0.0.1:443
 echo   - HTTP API ^& CDN:   http://127.0.0.1:8080
 echo   - Admin Dashboard:  http://127.0.0.1:8088/
@@ -25,7 +39,7 @@ echo Starting all servers... (Press Ctrl+C to stop)
 echo.
 
 rem Stop any stale server processes first
-powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.ProcessName -match 'start_all|http_config|messenger|server' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.ProcessName -match '^(start_all|http_config|messenger|server)\.exe$' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
 
 if exist "target\release\start_all.exe" (
     "target\release\start_all.exe"

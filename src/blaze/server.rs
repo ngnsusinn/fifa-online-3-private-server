@@ -37,6 +37,10 @@ pub struct Session {
 
 fn default_region() -> String {
     std::env::var("FO3_REGION").unwrap_or_else(|_| {
+        let lang = std::env::var("FO3_LANGUAGE").unwrap_or_default();
+        if lang.eq_ignore_ascii_case("eng") {
+            return "SG".to_string();
+        }
         if std::path::Path::new("FO3VN").exists()
             || std::path::Path::new(r"C:\Users\ngnsusinn\Documents\fifa-online-3-server\FO3VN").exists()
         {

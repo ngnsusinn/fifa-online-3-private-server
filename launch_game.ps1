@@ -11,8 +11,13 @@
 param(
   [string]$Exe = 'C:\Users\ngnsusinn\Documents\fifa-online-3-server\FO3VN\fifazf.exe',
   [string]$GameServer = '127.0.0.1:28000',
-  [string]$NotiServer = '127.0.0.1:28001'
+  [string]$NotiServer = '127.0.0.1:28001',
+  [string]$Lang = ($env:FO3_LANGUAGE ? $env:FO3_LANGUAGE : 'eng'),
+  [string]$Region = ($env:FO3_REGION ? $env:FO3_REGION : 'SG')
 )
+
+$RegionCode = $Region.ToLower()
+$RegionUpper = $Region.ToUpper()
 
 & $Exe `
   "-QUICKMATCH/SERVER=$GameServer" `
@@ -20,9 +25,9 @@ param(
   "-QUICKMATCH/NOTISERVER=$NotiServer" `
   "-FIFA/LAUNCHER/PID=$PID" `
   "-PUBLISHER/GARENA/TOKEN=testtoken" `
-  "-LOCALE/PUBLISHING_REGION=VN" `
+  "-LOCALE/PUBLISHING_REGION=$RegionUpper" `
   "-DUMPTRUCK/SERVER=127.0.0.1" `
-  region vn token testtoken
+  region $RegionCode token testtoken
 # ^ alias pairs (separate argv, no dash) parsed at fifazf+0x1EEE70: `region` must be a
 #   lowercase Garena code (sg/my/th/vn/id) and `token` must be set, else the client takes
 #   the Tencent path and fails "passport/token/signature missing".

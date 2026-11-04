@@ -49,10 +49,34 @@ fn cdn_file(rel: &str) -> Option<(&'static str, Vec<u8>)> {
     }
     let base = get_assets_dir();
     let file_path = base.join(rel);
-    if !file_path.is_file() {
-        return None;
-    }
-    let ext = file_path
+    let target = if file_path.is_file() {
+        file_path
+    } else {
+        let alt = Path::new("FO3VN").join("data").join("ui").join(rel);
+        if alt.is_file() {
+            alt
+        } else {
+            let alt2 = Path::new("FO3VN").join("data").join("ui").join("externalAssets").join(rel);
+            if alt2.is_file() {
+                alt2
+            } else if rel == "externalAssets/language_eng.big" {
+                let p = Path::new("FO3VN").join("data").join("ui").join("localization").join("eng.big");
+                if p.is_file() {
+                    return fs::read(&p).ok().map(|d| ("application/octet-stream", d));
+                }
+                return None;
+            } else if rel == "externalAssets/language_vie.big" {
+                let p = Path::new("FO3VN").join("data").join("ui").join("localization").join("vie.big");
+                if p.is_file() {
+                    return fs::read(&p).ok().map(|d| ("application/octet-stream", d));
+                }
+                return None;
+            } else {
+                return None;
+            }
+        }
+    };
+    let ext = target
         .extension()
         .and_then(|s| s.to_str())
         .unwrap_or("")
@@ -63,9 +87,10 @@ fn cdn_file(rel: &str) -> Option<(&'static str, Vec<u8>)> {
         "swf" => "application/x-shockwave-flash",
         "json" => "application/json",
         "xml" => "text/xml",
+        "usm" => "application/octet-stream",
         _ => "application/octet-stream",
     };
-    fs::read(&file_path).ok().map(|data| (ctype, data))
+    fs::read(&target).ok().map(|data| (ctype, data))
 }
 
 fn from_responses_file(path: &str) -> Option<Vec<u8>> {
@@ -154,7 +179,126 @@ fn get_patterns() -> &'static Vec<(Regex, &'static str)> {
                 "cup_leave",
             ),
             (Regex::new(r"^/cup/([0-9a-f]{24})$").unwrap(), "cup_id"),
+            (Regex::new(r"^/game/inweburl/(\w+)$").unwrap(), "inweburl"),
+            (Regex::new(r"^/static/bescript/(\w+)$").unwrap(), "bescript"),
+            (Regex::new(r"^/game/my/tactic/(\d+)$").unwrap(), "tactic_slot"),
+            (Regex::new(r"^/game/my/team/kickers/(\d+)$").unwrap(), "team_kickers"),
+            (Regex::new(r"^/coach/(\d+)/new/step/3$").unwrap(), "coach_new_team"),
+            (Regex::new(r"^/coach/(\d+)$").unwrap(), "coach_create"),
         ]
+    })
+}
+
+fn default_tactic(id: usize) -> Value {
+    json!({
+        "id": id,
+        "name": "",
+        "teammentality": 3,
+        "bus": {"buildupspeed": 50, "passing": 50, "positioning": 0},
+        "cc": {"passing": 50, "crossing": 50, "shooting": 50, "positioning": 0},
+        "def": {"mentality": 50, "aggression": 50, "teamwidth": 50, "defenderline": 0}
+    })
+}
+
+fn build_coach_me(st: &mut Value, slot: usize) -> Value {
+    let coach = if let Some(coaches) = st.get("coaches").and_then(|v| v.as_array()) {
+        coaches
+            .iter()
+            .find(|c| c.get("slot").and_then(|v| v.as_u64()) == Some(slot as u64))
+            .cloned()
+            .unwrap_or_else(|| state::my_coach(st).clone())
+    } else {
+        state::my_coach(st).clone()
+    };
+
+    let team = st
+        .get("teams")
+        .and_then(|t| t.get(&slot.to_string()))
+        .cloned()
+        .unwrap_or_else(|| state::my_team(st).clone());
+
+    let ep = coach.get("ep").and_then(|v| v.as_i64()).unwrap_or(state::START_EP);
+    let teamid = coach.get("teamid").and_then(|v| v.as_u64()).unwrap_or(1);
+    let cid = coach
+        .get("_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("000000000000000000000001")
+        .to_string();
+    let cname = coach
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Manager")
+        .to_string();
+
+    let summary = from_responses_file(&format!("/static/info/authentic/team/all/{}", teamid))
+        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        .and_then(|v| v.get("summary").cloned())
+        .unwrap_or_else(|| json!({
+            "id": teamid,
+            "teamid": teamid,
+            "name": "Arsenal",
+            "league": {"id": 13, "name": "Premier League"},
+            "nation": {"id": 14, "name": "England"},
+            "ovr": {"DF": 74, "MF": 73, "FW": 75},
+            "teamgrade": 4.5
+        }));
+
+    let squad_val = team.get("squad").cloned().unwrap_or_else(|| json!({
+        "positions": [],
+        "kickers": ["", "", "", "", ""],
+        "captain": ""
+    }));
+
+    json!({
+        "result": true,
+        "id": cid,
+        "_id": cid,
+        "name": cname,
+        "slot": slot,
+        "teamid": teamid,
+        "team": team.clone(),
+        "coach": coach.clone(),
+        "money": {
+            "ep": ep,
+            "es": 0,
+            "cash": 0,
+            "mp": 0,
+            "useable_mp": 0,
+            "mpdata": {"point": 0, "until": "2030-01-01T00:00:00.000Z"}
+        },
+        "igr": true,
+        "vipDetail": 2,
+        "vipExpireAt": 2051222400000i64,
+        "vipStatus": {"VIP1": 2051222400000i64},
+        "sp": {"point": 0},
+        "gpdata": {"gp": 0},
+        "badges": [],
+        "currentbadge": 0,
+        "levelinfo": {"level": 1, "exp": 0, "need": 600},
+        "statistics": {},
+        "league": {"leagueid": 13},
+        "club": {},
+        "uimode": 0,
+        "limits": {"cups": 3, "players": 200, "baseplayers": 200, "firstTeam": 36},
+        "transferfavorites": [],
+        "currdivision": "",
+        "playlimit": {},
+        "kit": {
+            "availables": {
+                "home": {"id": (teamid << 5)},
+                "away": {"id": (teamid << 5 | 1)},
+                "goalie": {"id": (teamid << 5 | 2)}
+            }
+        },
+        "summary": summary,
+        "career": {"appat": "2026-11-04T00:00:00.000Z"},
+        "stadium": {"id": 1},
+        "items": [],
+        "matchstats": [],
+        "scouters": [],
+        "cups": [],
+        "formations": team.get("formations").cloned().unwrap_or(json!([])),
+        "teamsquadlist": {"preset": [squad_val]}
     })
 }
 
@@ -168,6 +312,10 @@ fn handle_exact_or_pattern(
     match path {
         "/info/server/config" => {
             let region = std::env::var("FO3_REGION").unwrap_or_else(|_| {
+                let lang = std::env::var("FO3_LANGUAGE").unwrap_or_default();
+                if lang.eq_ignore_ascii_case("eng") {
+                    return "SG".to_string();
+                }
                 if Path::new("FO3VN").exists()
                     || Path::new(r"C:\Users\ngnsusinn\Documents\fifa-online-3-server\FO3VN").exists()
                 {
@@ -185,12 +333,11 @@ fn handle_exact_or_pattern(
         },
         "/info/server/locale" => {
             let lang = std::env::var("FO3_LANGUAGE").unwrap_or_else(|_| {
-                if Path::new("FO3VN").exists()
-                    || Path::new(r"C:\Users\ngnsusinn\Documents\fifa-online-3-server\FO3VN").exists()
-                {
-                    "vie".to_string()
+                let reg = std::env::var("FO3_REGION").unwrap_or_default();
+                if reg.eq_ignore_ascii_case("SG") {
+                    "eng".to_string()
                 } else {
-                    "ind".to_string()
+                    "vie".to_string()
                 }
             });
             let url = if host.contains("8080") {
@@ -227,24 +374,80 @@ fn handle_exact_or_pattern(
         "/shop/cash/charge/url" | "/shop/cash/history/url" => Some(json!({"url": "about:blank"})),
         "/coaches" => {
             let st = state::load_state();
+            let def_id = st.get("defaultcoachid").and_then(|v| v.as_str()).unwrap_or("");
+            let coaches_arr = st.get("coaches").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            let mut list = Vec::new();
+            for c in &coaches_arr {
+                let slot = c.get("slot").and_then(|v| v.as_u64()).unwrap_or(0);
+                let teamid = c.get("teamid").and_then(|v| v.as_u64()).unwrap_or(1);
+
+                // Load summary for teamid
+                let summary = from_responses_file(&format!("/static/info/authentic/team/all/{}", teamid))
+                    .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+                    .and_then(|v| v.get("summary").cloned())
+                    .unwrap_or_else(|| json!({
+                        "id": teamid,
+                        "teamid": teamid,
+                        "name": "Arsenal",
+                        "league": {"id": 13, "name": "Premier League"},
+                        "nation": {"id": 14, "name": "England"},
+                        "ovr": {"DF": 74, "MF": 73, "FW": 75},
+                        "teamgrade": 4.5
+                    }));
+
+                let mut entry = c.clone();
+                if let Some(obj) = entry.as_object_mut() {
+                    obj.insert("state".to_string(), json!("active"));
+                    obj.insert("summary".to_string(), summary);
+                    obj.insert("teamvalue".to_string(), json!({"val": 0}));
+                    obj.insert("levelinfo".to_string(), json!({"level": 1, "exp": 0, "need": 600}));
+                    obj.insert("recoveryperiod".to_string(), json!(300));
+                    obj.insert("slot".to_string(), json!(slot));
+                    obj.insert("teamid".to_string(), json!(teamid));
+                }
+                list.push(entry);
+            }
             Some(json!({
-                "coaches": st.get("coaches").cloned().unwrap_or(json!([])),
-                "defaultcoachid": st.get("defaultcoachid").cloned().unwrap_or(json!(""))
+                "coachlist": list.clone(),
+                "coaches": list,
+                "defaultcoachid": def_id
             }))
         }
-        "/coach/me" | "/coach/me/onready" => {
+        "/coach/me" => {
             let mut st = state::load_state();
-            let coach = state::my_coach(&st).clone();
-            let team = state::my_team(&st).clone();
-            let ep = coach.get("ep").and_then(|v| v.as_i64()).unwrap_or(state::START_EP);
-            // Grant daily login reward if available
             let _ = state::daily_login(&mut st);
             let _ = state::save_state(&st);
+            let slot = if let Some(coaches) = st.get("coaches").and_then(|v| v.as_array()) {
+                let def_id = st.get("defaultcoachid").and_then(|v| v.as_str()).unwrap_or("");
+                coaches.iter()
+                    .find(|c| c.get("_id").and_then(|v| v.as_str()) == Some(def_id))
+                    .and_then(|c| c.get("slot").and_then(|v| v.as_u64()))
+                    .unwrap_or(0) as usize
+            } else {
+                0
+            };
+            Some(build_coach_me(&mut st, slot))
+        }
+        "/coach/me/onready" => {
+            let mut st = state::load_state();
+            let slot = if let Some(coaches) = st.get("coaches").and_then(|v| v.as_array()) {
+                let def_id = st.get("defaultcoachid").and_then(|v| v.as_str()).unwrap_or("");
+                coaches.iter()
+                    .find(|c| c.get("_id").and_then(|v| v.as_str()) == Some(def_id))
+                    .and_then(|c| c.get("slot").and_then(|v| v.as_u64()))
+                    .unwrap_or(0) as usize
+            } else {
+                0
+            };
+            let body = build_coach_me(&mut st, slot);
             Some(json!({
                 "result": true,
-                "coach": coach,
-                "team": team,
-                "money": {"ep": ep, "point": 0, "cash": 0}
+                "resources": [
+                    {
+                        "uri": "/coach/me",
+                        "body": body
+                    }
+                ]
             }))
         }
         "/coach/me/squad" => {
@@ -266,21 +469,145 @@ fn handle_exact_or_pattern(
                 if let Some(c) = coaches.iter().find(|c| c.get("slot").and_then(|v| v.as_u64()) == Some(slot as u64)) {
                     if let Some(id) = c.get("_id").and_then(|v| v.as_str()) {
                         st["defaultcoachid"] = json!(id);
+                    }
+                }
+            }
+            let _ = state::daily_login(&mut st);
+            let _ = state::save_state(&st);
+
+            let body = build_coach_me(&mut st, slot);
+            Some(json!({
+                "result": true,
+                "resources": [
+                    {
+                        "uri": "/coach/me",
+                        "body": body
+                    }
+                ]
+            }))
+        }
+        "/account" => {
+            let mut acc: Value = from_responses_file("/account_base")
+                .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+                .unwrap_or_else(|| {
+                    json!({
+                        "result": true,
+                        "option": {
+                            "soundOption": {},
+                            "screenOption": {"Quality": 0},
+                            "aiOption": {},
+                            "cameraOption": {}
+                        },
+                        "features": {}
+                    })
+                });
+
+            let st = state::load_state();
+            let def_id = st.get("defaultcoachid").and_then(|v| v.as_str()).unwrap_or("");
+            acc["result"] = json!(true);
+            acc["account"] = json!({"uid": 1, "coachid": def_id});
+
+            let mut opt = acc.get("option").cloned().unwrap_or_else(|| json!({}));
+            if let Some(st_opt) = st.get("option").and_then(Value::as_object) {
+                if let Some(opt_obj) = opt.as_object_mut() {
+                    for (k, v) in st_opt {
+                        opt_obj.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+
+            // Sound defaults: Master, Commentary, PAVolume, PlayerCalls, SFX, Crowd, BGM
+            let mut sound_map = serde_json::Map::new();
+            for &(name, val) in &crate::http::constants::SOUND_DEFAULTS {
+                sound_map.insert(name.to_string(), json!(val));
+            }
+            if let Some(existing_sound) = opt.get("soundOption").and_then(Value::as_object) {
+                for (k, v) in existing_sound {
+                    sound_map.insert(k.clone(), v.clone());
+                }
+            }
+            opt["soundOption"] = Value::Object(sound_map);
+
+            // Control defaults
+            let ctl_ok = opt
+                .get("controlOption")
+                .map(crate::http::constants::is_valid_control_option)
+                .unwrap_or(false);
+            if !ctl_ok {
+                opt["controlOption"] = crate::http::constants::control_defaults_json();
+            }
+
+            acc["option"] = opt.clone();
+            acc["options"] = opt;
+            Some(acc)
+        }
+        "/account/option" => {
+            if method == Method::PUT || method == Method::POST {
+                let req: Value = serde_json::from_slice(body).unwrap_or(json!({}));
+                let mut st = state::load_state();
+                let old_ctl = st.get("option").and_then(|o| o.get("controlOption")).cloned();
+                let mut new_opt = serde_json::Map::new();
+                if let Some(obj) = req.as_object() {
+                    for (k, v) in obj {
+                        if k.ends_with("Option") && k != "controlOption" {
+                            new_opt.insert(k.clone(), v.clone());
+                        }
+                    }
+                }
+                let ctl = if let Some(ctl_val) = req.get("controlOption") {
+                    if crate::http::constants::is_valid_control_option(ctl_val) {
+                        Some(ctl_val.clone())
+                    } else {
+                        old_ctl
+                    }
+                } else {
+                    old_ctl
+                };
+                if let Some(c) = ctl {
+                    new_opt.insert("controlOption".to_string(), c);
+                }
+                st["option"] = Value::Object(new_opt);
+                let _ = state::save_state(&st);
+            }
+            Some(json!({"result": true}))
+        }
+        "/info/server/2ndpass" => Some(json!({
+            "result": true,
+            "has2ndpass": false,
+            "status": "ok"
+        })),
+        "/info/client/validation" => Some(json!({
+            "result": true,
+            "status": "ok"
+        })),
+        "/game/my/tactic/all" => {
+            let st = state::load_state();
+            let mut list = Vec::with_capacity(6);
+            let saved = st.get("tactics").and_then(|t| t.as_object());
+            for i in 0..6 {
+                let tac = saved
+                    .and_then(|s| s.get(&i.to_string()))
+                    .cloned()
+                    .unwrap_or_else(|| default_tactic(i));
+                list.push(tac);
+            }
+            Some(Value::Array(list))
+        }
+        "/game/my/team/captain" => {
+            let mut st = state::load_state();
+            if method == Method::PUT || method == Method::POST {
+                if let Ok(req) = serde_json::from_slice::<Value>(body) {
+                    if let Some(id) = req.get("id").and_then(|v| v.as_str()) {
+                        let team = state::my_team_mut(&mut st);
+                        if let Some(sq) = team.get_mut("squad") {
+                            sq["captain"] = json!(id);
+                        }
                         let _ = state::save_state(&st);
                     }
                 }
             }
             Some(json!({"result": true}))
         }
-        "/account" => {
-            let st = state::load_state();
-            let def_id = st.get("defaultcoachid").and_then(|v| v.as_str()).unwrap_or("");
-            Some(json!({
-                "result": true,
-                "account": {"uid": 1, "coachid": def_id}
-            }))
-        }
-        "/account/option" => Some(json!({"result": true})),
         "/events" => Some(json!({
             "events": [{"id": 1, "type": "enhance", "name": "Event"}]
         })),
@@ -293,6 +620,14 @@ fn handle_exact_or_pattern(
             }))
         }
         "/bag/unpackall" => Some(json!({"result": true})),
+        "/static/info/teamcolor" => Some(json!({
+            "teamColors": crate::http::team_color::get_all_team_colors(),
+            "teamColorSpecials": {}
+        })),
+        "/static/db/STATICVALUES/max_coachlevel" => Some(json!(100)),
+        "/account/trade2/usage" => Some(json!({"result": true, "usedcount": 0, "maxcount": 0, "remainsec": 0})),
+        "/trade3/notification" => Some(json!({"result": true})),
+        "/players/trade/proposal/resend" => Some(json!({"result": false, "reason": "NOT_SUPPORTED_REQUEST"})),
         _ => {
             // Check regex pattern routes
             for (re, name) in get_patterns() {
@@ -321,6 +656,118 @@ fn handle_exact_or_pattern(
                             let st = state::load_state();
                             let cups = st.get("cups").and_then(|c| c.get(cupid)).cloned();
                             Some(cups.unwrap_or(json!({})))
+                        }
+                        "inweburl" => Some(json!({"result": true, "url": "about:blank"})),
+                        "bescript" => {
+                            if let Some(data) = from_responses_file("/static/bescript/camera_controller") {
+                                if let Ok(v) = serde_json::from_slice::<Value>(&data) {
+                                    return Some(v);
+                                }
+                            }
+                            Some(json!({}))
+                        }
+                        "tactic_slot" => {
+                            let idx = caps.get(1).map(|m| m.as_str()).unwrap_or("0").parse::<usize>().unwrap_or(0);
+                            let mut st = state::load_state();
+                            if method == Method::PUT || method == Method::POST {
+                                if let Ok(mut req) = serde_json::from_slice::<Value>(body) {
+                                    if req.get("bus").is_some() {
+                                        req["id"] = json!(idx);
+                                        if st.get("tactics").is_none() {
+                                            st["tactics"] = json!({});
+                                        }
+                                        st["tactics"][idx.to_string()] = req;
+                                        let _ = state::save_state(&st);
+                                        return Some(json!({"result": true}));
+                                    }
+                                }
+                            }
+                            Some(json!({"result": true, "resources": [{"uri": format!("/game/my/tactic/{}", idx), "body": default_tactic(idx)}]}))
+                        }
+                        "team_kickers" => {
+                            let idx = caps.get(1).map(|m| m.as_str()).unwrap_or("0").parse::<usize>().unwrap_or(0);
+                            let mut st = state::load_state();
+                            if method == Method::PUT || method == Method::POST {
+                                if let Ok(req) = serde_json::from_slice::<Value>(body) {
+                                    if let Some(id) = req.get("id").and_then(|v| v.as_str()) {
+                                        let team = state::my_team_mut(&mut st);
+                                        if let Some(sq) = team.get_mut("squad") {
+                                            let mut kickers = sq.get("kickers").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                                            while kickers.len() <= idx {
+                                                kickers.push(json!(""));
+                                            }
+                                            kickers[idx] = json!(id);
+                                            sq["kickers"] = Value::Array(kickers);
+                                        }
+                                        let _ = state::save_state(&st);
+                                    }
+                                }
+                            }
+                            Some(json!({"result": true}))
+                        }
+                        "coach_create" => {
+                            let slot: usize = caps.get(1).map(|m| m.as_str()).unwrap_or("0").parse().unwrap_or(0);
+                            let req: Value = serde_json::from_slice(body).unwrap_or(json!({}));
+                            let mut st = state::load_state();
+                            let teamid = req.get("id").and_then(|v| v.as_u64()).unwrap_or(1);
+                            let coach_name = req.get("coachName").and_then(|v| v.as_str()).unwrap_or("Manager");
+                            let cid = format!("{:024}", slot + 1);
+                            let new_coach = json!({
+                                "_id": cid,
+                                "slot": slot,
+                                "name": coach_name,
+                                "state": "active",
+                                "teamid": teamid,
+                                "ep": state::START_EP,
+                                "bag": [],
+                                "items": [],
+                                "daily": {"last": "", "streak": 0, "total": 0},
+                                "scout_used": {}
+                            });
+                            let mut coaches = st.get("coaches").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                            coaches.retain(|c| c.get("slot").and_then(|v| v.as_u64()) != Some(slot as u64));
+                            coaches.push(new_coach);
+                            st["coaches"] = Value::Array(coaches);
+                            if st.get("defaultcoachid").and_then(|v| v.as_str()).unwrap_or("").is_empty() {
+                                st["defaultcoachid"] = json!(cid);
+                            }
+                            let _ = state::save_state(&st);
+                            Some(json!({"result": true}))
+                        }
+                        "coach_new_team" => {
+                            let slot: usize = caps.get(1).map(|m| m.as_str()).unwrap_or("0").parse().unwrap_or(0);
+                            let req: Value = serde_json::from_slice(body).unwrap_or(json!({}));
+                            let teamid = req.get("id").and_then(|v| v.as_u64()).unwrap_or(1);
+                            let spids: Vec<u64> = req.get("spids")
+                                .and_then(|v| v.as_array())
+                                .map(|arr| arr.iter().filter_map(|x| x.as_u64()).collect())
+                                .unwrap_or_default();
+
+                            let mut team = from_responses_file(&format!("/static/info/authentic/team/all/{}", teamid))
+                                .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+                                .and_then(|v| v.get("team").cloned())
+                                .unwrap_or_else(|| json!({
+                                    "teamid": teamid,
+                                    "players": [],
+                                    "squad": {"captain": "", "kickers": ["", "", "", "", ""], "positions": []}
+                                }));
+
+                            if !spids.is_empty() {
+                                if let Some(players) = team.get_mut("players").and_then(|v| v.as_array_mut()) {
+                                    players.retain(|p| p.get("spid").and_then(|s| s.as_u64()).map(|s| spids.contains(&s)).unwrap_or(false));
+                                }
+                                if let Some(positions) = team.get_mut("squad").and_then(|s| s.get_mut("positions")).and_then(|v| v.as_array_mut()) {
+                                    positions.retain(|p| p.get("spid").and_then(|s| s.as_u64()).map(|s| spids.contains(&s)).unwrap_or(false));
+                                }
+                            }
+
+                            let mut st = state::load_state();
+                            if st.get("teams").is_none() {
+                                st["teams"] = json!({});
+                            }
+                            st["teams"][slot.to_string()] = team.clone();
+                            let _ = state::save_state(&st);
+                            Some(json!({"result": true, "team": team}))
                         }
                         _ => None,
                     };

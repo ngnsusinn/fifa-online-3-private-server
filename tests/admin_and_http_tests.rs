@@ -172,4 +172,131 @@ async fn test_http_router_and_fallbacks() {
     let bytes = to_bytes(resp_unk_post.into_body(), usize::MAX).await.unwrap();
     let val_post: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(val_post, serde_json::json!({"result": true}));
+
+    // 6. Test English locale and SG region
+    std::env::set_var("FO3_LANGUAGE", "eng");
+    let req_locale = Request::builder()
+        .uri("/info/server/locale")
+        .header(header::HOST, "APSEODESK172")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::empty())
+        .unwrap();
+    let resp_locale = app.clone().oneshot(req_locale).await.unwrap();
+    assert_eq!(resp_locale.status(), StatusCode::OK);
+    let bytes = to_bytes(resp_locale.into_body(), usize::MAX).await.unwrap();
+    let val_locale: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(val_locale["language"], "eng");
+    assert_eq!(val_locale["result"], true);
+
+    let req_conf_eng = Request::builder()
+        .uri("/info/server/config")
+        .header(header::HOST, "APSEODESK172")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::empty())
+        .unwrap();
+    let resp_conf_eng = app.clone().oneshot(req_conf_eng).await.unwrap();
+    assert_eq!(resp_conf_eng.status(), StatusCode::OK);
+    let bytes = to_bytes(resp_conf_eng.into_body(), usize::MAX).await.unwrap();
+    let val_conf: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(val_conf["region"], "SG");
+
+    // 7. Test inweburl handler
+    let req_inweb = Request::builder()
+        .uri("/game/inweburl/notice")
+        .header(header::HOST, "APSEODESK172")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::empty())
+        .unwrap();
+    let resp_inweb = app.clone().oneshot(req_inweb).await.unwrap();
+    assert_eq!(resp_inweb.status(), StatusCode::OK);
+    let bytes = to_bytes(resp_inweb.into_body(), usize::MAX).await.unwrap();
+    let val_inweb: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(val_inweb["url"], "about:blank");
+    assert_eq!(val_inweb["result"], true);
+
+    // 8. Test CDN language_eng.big asset serving
+    let req_cdn_eng = Request::builder()
+        .uri("/cdn/externalAssets/language_eng.big")
+        .header(header::HOST, "APSEODESK172")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::empty())
+        .unwrap();
+    let resp_cdn_eng = app.clone().oneshot(req_cdn_eng).await.unwrap();
+    assert_eq!(resp_cdn_eng.status(), StatusCode::OK);
+    let bytes_cdn = to_bytes(resp_cdn_eng.into_body(), usize::MAX).await.unwrap();
+    assert!(!bytes_cdn.is_empty());
+
+    // 9. Test /account returns options
+    let req_account = Request::builder()
+        .uri("/account")
+        .header(header::HOST, "APSEODESK172")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::empty())
+        .unwrap();
+    let resp_account = app.clone().oneshot(req_account).await.unwrap();
+    assert_eq!(resp_account.status(), StatusCode::OK);
+    let bytes_acc = to_bytes(resp_account.into_body(), usize::MAX).await.unwrap();
+    let val_acc: Value = serde_json::from_slice(&bytes_acc).unwrap();
+    assert_eq!(val_acc["result"], true);
+    assert!(val_acc.get("option").is_some());
+    assert!(val_acc["option"].get("soundOption").is_some());
+    assert!(val_acc["option"].get("controlOption").is_some());
+    assert!(val_acc.get("options").is_some());
+
+    // 10. Test /coaches returns coachlist with summary, teamvalue, levelinfo
+    let req_coaches = Request::builder()
+        .uri("/coaches")
+        .header(header::HOST, "APSEODESK172")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::empty())
+        .unwrap();
+    let resp_coaches = app.clone().oneshot(req_coaches).await.unwrap();
+    assert_eq!(resp_coaches.status(), StatusCode::OK);
+    let bytes_c = to_bytes(resp_coaches.into_body(), usize::MAX).await.unwrap();
+    let val_c: Value = serde_json::from_slice(&bytes_c).unwrap();
+    assert!(val_c.get("coachlist").is_some());
+    assert!(val_c.get("coaches").is_some());
+    let coachlist = val_c["coachlist"].as_array().unwrap();
+    if !coachlist.is_empty() {
+        assert!(coachlist[0].get("summary").is_some());
+        assert!(coachlist[0].get("teamvalue").is_some());
+        assert!(coachlist[0].get("levelinfo").is_some());
+        assert_eq!(coachlist[0]["state"], "active");
+    }
+
+    // 11. Test /coach/me returns root fields
+    let req_coach_me = Request::builder()
+        .uri("/coach/me")
+        .header(header::HOST, "APSEODESK172")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::empty())
+        .unwrap();
+    let resp_coach_me = app.clone().oneshot(req_coach_me).await.unwrap();
+    assert_eq!(resp_coach_me.status(), StatusCode::OK);
+    let bytes_me = to_bytes(resp_coach_me.into_body(), usize::MAX).await.unwrap();
+    let val_me: Value = serde_json::from_slice(&bytes_me).unwrap();
+    assert_eq!(val_me["result"], true);
+    assert!(val_me.get("money").is_some());
+    assert_eq!(val_me["money"]["mpdata"]["until"], "2030-01-01T00:00:00.000Z");
+    assert!(val_me.get("limits").is_some());
+    assert_eq!(val_me["limits"]["firstTeam"], 36);
+
+    // 12. Test /coach/0/default returns resources with body.id
+    let req_default = Request::builder()
+        .method(Method::POST)
+        .uri("/coach/0/default")
+        .header(header::HOST, "APSEODESK172")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::from(r#"{"_method":"PUT"}"#))
+        .unwrap();
+    let resp_default = app.clone().oneshot(req_default).await.unwrap();
+    assert_eq!(resp_default.status(), StatusCode::OK);
+    let bytes_def = to_bytes(resp_default.into_body(), usize::MAX).await.unwrap();
+    let val_def: Value = serde_json::from_slice(&bytes_def).unwrap();
+    assert_eq!(val_def["result"], true);
+    assert!(val_def.get("resources").is_some());
+    let res = val_def["resources"].as_array().unwrap();
+    assert!(!res.is_empty());
+    assert_eq!(res[0]["uri"], "/coach/me");
+    assert!(res[0]["body"].get("id").is_some());
 }
