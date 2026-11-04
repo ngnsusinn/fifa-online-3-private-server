@@ -15,13 +15,13 @@ using System.Windows.Forms;
 
 static class Launcher
 {
-    const string GameDir = @"D:\FO3ID\32795";
+    const string GameDir = @"C:\Users\ngnsusinn\Documents\fifa-online-3-server\FO3VN";
     const string Defaults =
         "-QUICKMATCH/SERVER=127.0.0.1:28000 -QUICKMATCH/PROTOCOL=tcp " +
         "-QUICKMATCH/NOTISERVER=127.0.0.1:28001 -PUBLISHER/GARENA/TOKEN=testtoken " +
-        "-LOCALE/PUBLISHING_REGION=ID -DUMPTRUCK/SERVER=127.0.0.1 " +
+        "-LOCALE/PUBLISHING_REGION=VN -DUMPTRUCK/SERVER=127.0.0.1 " +
         // Alias pairs (no dash) select the Garena login path; see launch_game.ps1.
-        "region id token testtoken";
+        "region vn token testtoken";
 
     [STAThread]
     static int Main(string[] args)

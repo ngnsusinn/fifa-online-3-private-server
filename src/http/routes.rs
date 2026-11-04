@@ -22,15 +22,23 @@ fn get_assets_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("FO3_ASSETS") {
         return PathBuf::from(dir);
     }
-    if let Ok(game) = std::env::var("FO3_GAME") {
-        return PathBuf::from(game)
-            .join("_cache")
-            .join("games")
-            .join("fo3id");
-    }
-    let default_path = Path::new(r"D:\FO3ID\32795\_cache\games\fo3id");
-    if default_path.exists() {
-        return default_path.to_path_buf();
+    let candidates = [
+        std::env::var("FO3_GAME").unwrap_or_default(),
+        "FO3VN".to_string(),
+        r"C:\Users\ngnsusinn\Documents\fifa-online-3-server\FO3VN".to_string(),
+        r"D:\FO3ID\32795".to_string(),
+    ];
+    for base in candidates {
+        if base.is_empty() {
+            continue;
+        }
+        let p = Path::new(&base);
+        for sub in ["fo3sg", "fo3vn", "fo3id"] {
+            let candidate = p.join("_cache").join("games").join(sub);
+            if candidate.exists() {
+                return candidate;
+            }
+        }
     }
     PathBuf::from("cdn")
 }
@@ -164,7 +172,15 @@ fn handle_exact_or_pattern(
             "status": "ok"
         })),
         "/info/server/locale" => {
-            let lang = std::env::var("FO3_LANGUAGE").unwrap_or_else(|_| "ind".to_string());
+            let lang = std::env::var("FO3_LANGUAGE").unwrap_or_else(|_| {
+                if Path::new("FO3VN").exists()
+                    || Path::new(r"C:\Users\ngnsusinn\Documents\fifa-online-3-server\FO3VN").exists()
+                {
+                    "vie".to_string()
+                } else {
+                    "ind".to_string()
+                }
+            });
             Some(json!({
                 "result": true,
                 "language": lang,

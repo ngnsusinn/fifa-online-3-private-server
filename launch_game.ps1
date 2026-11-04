@@ -9,7 +9,7 @@
 # Then run this (XignCode loads a kernel driver, so run as Administrator).
 
 param(
-  [string]$Exe = 'D:\FO3ID\32795\fifazf.exe',
+  [string]$Exe = 'C:\Users\ngnsusinn\Documents\fifa-online-3-server\FO3VN\fifazf.exe',
   [string]$GameServer = '127.0.0.1:28000',
   [string]$NotiServer = '127.0.0.1:28001'
 )
@@ -20,9 +20,9 @@ param(
   "-QUICKMATCH/NOTISERVER=$NotiServer" `
   "-FIFA/LAUNCHER/PID=$PID" `
   "-PUBLISHER/GARENA/TOKEN=testtoken" `
-  "-LOCALE/PUBLISHING_REGION=ID" `
+  "-LOCALE/PUBLISHING_REGION=VN" `
   "-DUMPTRUCK/SERVER=127.0.0.1" `
-  region id token testtoken
+  region vn token testtoken
 # ^ alias pairs (separate argv, no dash) parsed at fifazf+0x1EEE70: `region` must be a
 #   lowercase Garena code (sg/my/th/vn/id) and `token` must be set, else the client takes
 #   the Tencent path and fails "passport/token/signature missing".

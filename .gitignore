@@ -16,3 +16,7 @@ __pycache__/
 
 # Rust target build output
 target/
+
+
+# Game Files
+FO3VN/

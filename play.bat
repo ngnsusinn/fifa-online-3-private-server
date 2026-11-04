@@ -12,6 +12,8 @@ if exist "target\release\start_all.exe" (
 timeout /t 4 /nobreak >nul
 rem RunAsInvoker: start the game without the UAC prompt (it runs fine unelevated)
 set __COMPAT_LAYER=RunAsInvoker
-if exist "%~dp0launcher\fifalauncher.exe" (
+if exist "%~dp0FO3VN\fifalauncher.exe" (
+    start "" "%~dp0FO3VN\fifalauncher.exe"
+) else if exist "%~dp0launcher\fifalauncher.exe" (
     start "" "%~dp0launcher\fifalauncher.exe"
 )
