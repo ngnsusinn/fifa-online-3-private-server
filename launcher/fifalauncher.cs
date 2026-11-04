@@ -14,21 +14,84 @@ static class Launcher
 {
     const string GameDir = @"C:\Users\ngnsusinn\Documents\fifa-online-3-server\FO3VN";
 
-    static string GetDefaultArgs()
+    static string BuildGameArgs(string[] args)
     {
+        // If caller passed full arguments with custom QUICKMATCH/SERVER, respect them.
+        if (args != null && args.Any(a => a.IndexOf("QUICKMATCH/SERVER", StringComparison.OrdinalIgnoreCase) >= 0))
+        {
+            return string.Join(" ", args.Select(a => a.Contains(" ") ? "\"" + a + "\"" : a));
+        }
+
         string lang = Environment.GetEnvironmentVariable("FO3_LANGUAGE");
         string region = Environment.GetEnvironmentVariable("FO3_REGION");
+        string token = "testtoken";
+        string server = "127.0.0.1:28000";
+        string notiServer = "127.0.0.1:28001";
+
+        if (args != null && args.Length > 0)
+        {
+            for (int i = 0; i < args.Length; i++)
+            {
+                string a = args[i];
+                if (a.Equals("eng", StringComparison.OrdinalIgnoreCase) || a.Equals("en", StringComparison.OrdinalIgnoreCase) || a.Equals("sg", StringComparison.OrdinalIgnoreCase))
+                {
+                    lang = "eng";
+                    region = "SG";
+                }
+                else if (a.Equals("vie", StringComparison.OrdinalIgnoreCase) || a.Equals("vn", StringComparison.OrdinalIgnoreCase))
+                {
+                    lang = "vie";
+                    region = "VN";
+                }
+                else if (a.Equals("ind", StringComparison.OrdinalIgnoreCase) || a.Equals("id", StringComparison.OrdinalIgnoreCase))
+                {
+                    lang = "ind";
+                    region = "ID";
+                }
+                else if (a.StartsWith("-LOCALE/PUBLISHING_REGION=", StringComparison.OrdinalIgnoreCase))
+                {
+                    region = a.Substring("-LOCALE/PUBLISHING_REGION=".Length);
+                }
+                else if (a.Equals("region", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    region = args[++i];
+                }
+                else if (a.StartsWith("-PUBLISHER/GARENA/TOKEN=", StringComparison.OrdinalIgnoreCase))
+                {
+                    token = a.Substring("-PUBLISHER/GARENA/TOKEN=".Length);
+                }
+                else if (a.Equals("token", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    token = args[++i];
+                }
+            }
+        }
+
         if (string.IsNullOrEmpty(region))
         {
-            region = (lang != null && lang.Equals("vie", StringComparison.OrdinalIgnoreCase)) ? "VN" : "SG";
+            if (lang != null && (lang.Equals("vie", StringComparison.OrdinalIgnoreCase) || lang.Equals("vn", StringComparison.OrdinalIgnoreCase)))
+            {
+                region = "VN";
+            }
+            else if (lang != null && (lang.Equals("ind", StringComparison.OrdinalIgnoreCase) || lang.Equals("id", StringComparison.OrdinalIgnoreCase)))
+            {
+                region = "ID";
+            }
+            else
+            {
+                region = "SG";
+            }
         }
+
+        string regionUpper = region.ToUpperInvariant();
         string regionLower = region.ToLowerInvariant();
+
         return string.Format(
-            "-QUICKMATCH/SERVER=127.0.0.1:28000 -QUICKMATCH/PROTOCOL=tcp " +
-            "-QUICKMATCH/NOTISERVER=127.0.0.1:28001 -PUBLISHER/GARENA/TOKEN=testtoken " +
-            "-LOCALE/PUBLISHING_REGION={0} -DUMPTRUCK/SERVER=127.0.0.1 " +
-            "region {1} token testtoken",
-            region.ToUpperInvariant(), regionLower
+            "-QUICKMATCH/SERVER={0} -QUICKMATCH/PROTOCOL=tcp " +
+            "-QUICKMATCH/NOTISERVER={1} -PUBLISHER/GARENA/TOKEN={2} " +
+            "-LOCALE/PUBLISHING_REGION={3} -DUMPTRUCK/SERVER=127.0.0.1 " +
+            "region {4} token {2}",
+            server, notiServer, token, regionUpper, regionLower
         );
     }
 
@@ -39,29 +102,7 @@ static class Launcher
         if (!File.Exists(exe))
             exe = Path.Combine(GameDir, "fifazf.exe");
 
-        string gameArgs;
-        if (args.Length == 0)
-        {
-            gameArgs = GetDefaultArgs();
-        }
-        else if (args.Length == 1 && (args[0].Equals("eng", StringComparison.OrdinalIgnoreCase) || args[0].Equals("en", StringComparison.OrdinalIgnoreCase)))
-        {
-            gameArgs = "-QUICKMATCH/SERVER=127.0.0.1:28000 -QUICKMATCH/PROTOCOL=tcp " +
-                       "-QUICKMATCH/NOTISERVER=127.0.0.1:28001 -PUBLISHER/GARENA/TOKEN=testtoken " +
-                       "-LOCALE/PUBLISHING_REGION=SG -DUMPTRUCK/SERVER=127.0.0.1 " +
-                       "region sg token testtoken";
-        }
-        else if (args.Length == 1 && (args[0].Equals("vie", StringComparison.OrdinalIgnoreCase) || args[0].Equals("vn", StringComparison.OrdinalIgnoreCase)))
-        {
-            gameArgs = "-QUICKMATCH/SERVER=127.0.0.1:28000 -QUICKMATCH/PROTOCOL=tcp " +
-                       "-QUICKMATCH/NOTISERVER=127.0.0.1:28001 -PUBLISHER/GARENA/TOKEN=testtoken " +
-                       "-LOCALE/PUBLISHING_REGION=VN -DUMPTRUCK/SERVER=127.0.0.1 " +
-                       "region vn token testtoken";
-        }
-        else
-        {
-            gameArgs = string.Join(" ", args.Select(a => a.Contains(" ") ? "\"" + a + "\"" : a));
-        }
+        string gameArgs = BuildGameArgs(args);
 
         gameArgs += " -FIFA/LAUNCHER/PID=" + Process.GetCurrentProcess().Id;
 

@@ -299,4 +299,20 @@ async fn test_http_router_and_fallbacks() {
     assert!(!res.is_empty());
     assert_eq!(res[0]["uri"], "/coach/me");
     assert!(res[0]["body"].get("id").is_some());
+
+    // 13. Test /events returns valid condition and timeset
+    let req_events = Request::builder()
+        .uri("/events")
+        .header(header::HOST, "APSEODESK172")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::empty())
+        .unwrap();
+    let resp_events = app.clone().oneshot(req_events).await.unwrap();
+    assert_eq!(resp_events.status(), StatusCode::OK);
+    let bytes_ev = to_bytes(resp_events.into_body(), usize::MAX).await.unwrap();
+    let val_ev: Value = serde_json::from_slice(&bytes_ev).unwrap();
+    let ev_arr = val_ev["events"].as_array().unwrap();
+    assert!(!ev_arr.is_empty());
+    assert!(ev_arr[0].get("condition").is_some());
+    assert_eq!(ev_arr[0]["condition"]["timeset"]["startdate"], "20140101");
 }

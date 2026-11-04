@@ -47,6 +47,19 @@ fn cdn_file(rel: &str) -> Option<(&'static str, Vec<u8>)> {
     if rel.contains("..") || rel.starts_with('/') || rel.starts_with('\\') {
         return None;
     }
+    // Dedicated clean assets for localization: ensure real localization bigs are served
+    // rather than potentially corrupted cache files.
+    if rel == "externalAssets/language_eng.big" {
+        let p = Path::new("FO3VN").join("data").join("ui").join("localization").join("eng.big");
+        if p.is_file() {
+            return fs::read(&p).ok().map(|d| ("application/octet-stream", d));
+        }
+    } else if rel == "externalAssets/language_vie.big" {
+        let p = Path::new("FO3VN").join("data").join("ui").join("localization").join("vie.big");
+        if p.is_file() {
+            return fs::read(&p).ok().map(|d| ("application/octet-stream", d));
+        }
+    }
     let base = get_assets_dir();
     let file_path = base.join(rel);
     let target = if file_path.is_file() {
@@ -609,7 +622,31 @@ fn handle_exact_or_pattern(
             Some(json!({"result": true}))
         }
         "/events" => Some(json!({
-            "events": [{"id": 1, "type": "enhance", "name": "Event"}]
+            "events": [
+                {
+                    "eventid": 1001,
+                    "active": true,
+                    "reason": [],
+                    "condition": {
+                        "type": "enhance",
+                        "enhance": {"season": []},
+                        "timeset": {
+                            "startdate": "20140101",
+                            "enddate": "20351231",
+                            "starttime": "0000",
+                            "endtime": "2359"
+                        },
+                        "targetuser": {"targetuser_igr": 255, "targetuser_vip": 255}
+                    },
+                    "reward": [[{"boosts": {"BOOST_PLUS_ENHANCE": 10}}]],
+                    "messages": {
+                        "main": {
+                            "name": "Event Upgrade",
+                            "description": "Peluang sukses upgrade +10%."
+                        }
+                    }
+                }
+            ]
         })),
         "/shop/list" => Some(json!({"products": []})),
         "/bag" => {
