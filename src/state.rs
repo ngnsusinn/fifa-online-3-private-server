@@ -644,9 +644,9 @@ pub fn daily_login(st: &mut Value) -> Option<Value> {
     let idx = ((streak - 1) as usize) % table.len();
     let rew = &table[idx];
     let items = reward_items(rew);
-    let title = format!("Hadiah login harian - hari ke-{}", streak);
+    let title = format!("Quà đăng nhập hàng ngày - Ngày {}", streak);
     let msg = format!(
-        "Login {} hari berturut-turut. Login lagi besok untuk hadiah hari ke-{}.",
+        "Đăng nhập {} ngày liên tục. Đăng nhập tiếp vào ngày mai để nhận quà ngày {}.",
         streak,
         streak + 1
     );

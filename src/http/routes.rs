@@ -487,15 +487,63 @@ fn handle_exact_or_pattern(
         }
         "/coach/me/squad" => {
             let mut st = state::load_state();
+            let slot = state::default_slot(&st);
             if method == Method::PUT || method == Method::POST {
-                if let Ok(v) = serde_json::from_slice::<Value>(body) {
+                if let Ok(req) = serde_json::from_slice::<Value>(body) {
                     let team = state::my_team_mut(&mut st);
-                    team["squad"] = v;
+                    let sq = if req.get("squad").is_some() {
+                        req.get("squad").cloned().unwrap_or(json!({}))
+                    } else {
+                        req.clone()
+                    };
+
+                    if let Some(pos_arr) = sq.get("positions").and_then(|v| v.as_array()) {
+                        let starter_count = pos_arr
+                            .iter()
+                            .filter(|p| p.get("pos").and_then(|v| v.as_u64()).unwrap_or(99) < 28)
+                            .count();
+                        if starter_count >= 11 {
+                            if let Some(sq_obj) = team.get_mut("squad").and_then(|v| v.as_object_mut()) {
+                                sq_obj.insert("positions".to_string(), Value::Array(pos_arr.clone()));
+                                if let Some(form) = sq.get("formation") {
+                                    sq_obj.insert("formation".to_string(), form.clone());
+                                }
+                                if let Some(workrate) = sq.get("workrate") {
+                                    sq_obj.insert("workrate".to_string(), workrate.clone());
+                                }
+                            }
+                        }
+                    }
+
+                    let cap = req.get("captain").or_else(|| sq.get("captain"));
+                    if let Some(c) = cap {
+                        team["captain"] = c.clone();
+                        if let Some(sq_obj) = team.get_mut("squad").and_then(|v| v.as_object_mut()) {
+                            sq_obj.insert("captain".to_string(), c.clone());
+                        }
+                    }
+
+                    let kickers = req.get("kickers").or_else(|| sq.get("kickers"));
+                    if let Some(k) = kickers {
+                        team["kickers"] = k.clone();
+                        if let Some(sq_obj) = team.get_mut("squad").and_then(|v| v.as_object_mut()) {
+                            sq_obj.insert("kickers".to_string(), k.clone());
+                        }
+                    }
+
                     let _ = state::save_state(&st);
                 }
             }
-            let team = state::my_team(&st);
-            Some(team.get("squad").cloned().unwrap_or(json!({})))
+            let body = build_coach_me(&mut st, slot);
+            Some(json!({
+                "result": true,
+                "resources": [
+                    {
+                        "uri": "/coach/me",
+                        "body": body
+                    }
+                ]
+            }))
         }
         "/coach/0/default" | "/coach/1/default" => {
             let mut st = state::load_state();
@@ -670,7 +718,22 @@ fn handle_exact_or_pattern(
                 }
             ]
         })),
-        "/shop/list" => Some(json!({"products": []})),
+        p if p == "/shop/list" || p.starts_with("/shop/list/") => Some(json!([])),
+        "/monthlypack" => {
+            let st = state::load_state();
+            if method == Method::POST {
+                Some(json!({
+                    "result": true,
+                    "resources": [
+                        {"uri": "/monthlypack", "body": []},
+                        {"uri": "/bag", "body": state::my_coach(&st).get("bag").cloned().unwrap_or(json!([]))}
+                    ]
+                }))
+            } else {
+                Some(json!([]))
+            }
+        },
+        "/specifictarget" => Some(json!({"issell": true, "targets": []})),
         "/bag" => {
             let st = state::load_state();
             let coach = state::my_coach(&st);

@@ -23,12 +23,12 @@ fn as_int(v: &Value, lo: i64, hi: i64, what: &str) -> Result<i64, String> {
     } else if let Some(s) = v.as_str() {
         s.trim()
             .parse::<i64>()
-            .map_err(|_| format!("{} harus angka", what))?
+            .map_err(|_| format!("{} phải là số", what))?
     } else {
-        return Err(format!("{} harus angka", what));
+        return Err(format!("{} phải là số", what));
     };
     if num < lo || num > hi {
-        return Err(format!("{} harus {}..{}", what, lo, hi));
+        return Err(format!("{} phải từ {}..{}", what, lo, hi));
     }
     Ok(num)
 }
@@ -189,7 +189,7 @@ fn handle_ep(params: &HashMap<String, Value>) -> Result<Value, String> {
             coach["ep"] = json!(0);
         }
     } else {
-        return Err("EP add atau set diperlukan".to_string());
+        return Err("Cần tham số EP add hoặc set".to_string());
     }
     let ep = state::my_coach(&st)
         .get("ep")
@@ -202,20 +202,20 @@ fn handle_ep(params: &HashMap<String, Value>) -> Result<Value, String> {
 fn handle_player_add(params: &HashMap<String, Value>) -> Result<Value, String> {
     let mut st = state::load_state();
     let spid = as_int(
-        params.get("spid").ok_or("spid diperlukan")?,
+        params.get("spid").ok_or("Cần có spid")?,
         1,
         1_000_000_000,
         "spid",
     )? as u64;
     let grade = params
         .get("grade")
-        .map(|g| as_int(g, 1, 10, "grade"))
+        .map(|g| as_int(g, 1, 10, "cấp thẻ"))
         .transpose()?
         .unwrap_or(1) as u32;
 
     let names = state::names(&[spid]);
     if names.is_empty() && Path::new(state::FIFADB_PATH).exists() {
-        return Err("spid tidak ada di database".to_string());
+        return Err("spid không tồn tại trong cơ sở dữ liệu".to_string());
     }
 
     let team = state::my_team_mut(&mut st);
@@ -225,7 +225,7 @@ fn handle_player_add(params: &HashMap<String, Value>) -> Result<Value, String> {
         .map(|a| a.len())
         .unwrap_or(0);
     if p_count >= state::MAX_PLAYERS {
-        return Err(format!("klub penuh ({} pemain)", state::MAX_PLAYERS));
+        return Err(format!("CLB đã đầy (tối đa {} cầu thủ)", state::MAX_PLAYERS));
     }
 
     let p = state::add_player(team, spid, grade);
@@ -238,12 +238,12 @@ fn handle_player_grade(params: &HashMap<String, Value>) -> Result<Value, String>
     let id = params
         .get("id")
         .and_then(|v| v.as_str())
-        .ok_or("id diperlukan")?;
+        .ok_or("Cần có id")?;
     let grade = as_int(
-        params.get("grade").ok_or("grade diperlukan")?,
+        params.get("grade").ok_or("Cần có cấp thẻ")?,
         0,
         10,
-        "grade",
+        "cấp thẻ",
     )?;
     let team = state::my_team_mut(&mut st);
     let mut found = false;
@@ -257,7 +257,7 @@ fn handle_player_grade(params: &HashMap<String, Value>) -> Result<Value, String>
         }
     }
     if !found {
-        return Err("pemain tidak ditemukan".to_string());
+        return Err("Không tìm thấy cầu thủ".to_string());
     }
     state::save_state(&st).map_err(|e| e.to_string())?;
     Ok(json!({"ok": true}))
@@ -268,7 +268,7 @@ fn handle_player_remove(params: &HashMap<String, Value>) -> Result<Value, String
     let id = params
         .get("id")
         .and_then(|v| v.as_str())
-        .ok_or("id diperlukan")?;
+        .ok_or("Cần có id")?;
     let team = state::my_team(&st);
     let p_opt = team
         .get("players")
@@ -276,10 +276,10 @@ fn handle_player_remove(params: &HashMap<String, Value>) -> Result<Value, String
         .and_then(|a| a.iter().find(|p| state::iid(p) == id));
     let p = match p_opt {
         Some(p) => p.clone(),
-        None => return Err("pemain tidak ditemukan".to_string()),
+        None => return Err("Không tìm thấy cầu thủ".to_string()),
     };
     if state::in_squad(team, &p) {
-        return Err("pemain ada di 18 skuad; ganti dulu di Formasi".to_string());
+        return Err("Cầu thủ đang ở trong đội hình 18 người; hãy thay ra ở mục Đội hình trước".to_string());
     }
     let team_mut = state::my_team_mut(&mut st);
     state::remove_player(team_mut, id);
@@ -292,7 +292,7 @@ fn handle_player_team(params: &HashMap<String, Value>) -> Result<Value, String> 
     let id = params
         .get("id")
         .and_then(|v| v.as_str())
-        .ok_or("id diperlukan")?;
+        .ok_or("Cần có id")?;
     let team_str = params.get("team").and_then(|v| v.as_str()).unwrap_or("");
     let team = state::my_team(&st);
     let p_opt = team
@@ -301,10 +301,10 @@ fn handle_player_team(params: &HashMap<String, Value>) -> Result<Value, String> 
         .and_then(|a| a.iter().find(|p| state::iid(p) == id));
     let p = match p_opt {
         Some(p) => p.clone(),
-        None => return Err("pemain tidak ditemukan".to_string()),
+        None => return Err("Không tìm thấy cầu thủ".to_string()),
     };
     if team_str == "second" && state::in_squad(team, &p) {
-        return Err("pemain 18 skuad tetap di Tim inti".to_string());
+        return Err("Cầu thủ thuộc đội hình 18 người phải ở Đội chính".to_string());
     }
     let team_mut = state::my_team_mut(&mut st);
     if let Some(players) = team_mut.get_mut("players").and_then(|p| p.as_array_mut()) {
@@ -326,17 +326,17 @@ fn handle_player_team(params: &HashMap<String, Value>) -> Result<Value, String> 
 fn handle_give_pack(params: &HashMap<String, Value>) -> Result<Value, String> {
     let mut st = state::load_state();
     let itemid = as_int(
-        params.get("itemid").ok_or("itemid diperlukan")?,
+        params.get("itemid").ok_or("Cần có itemid")?,
         1,
         10_000_000_000,
-        "pack",
+        "gói thẻ",
     )? as u64;
     if state::get_pack_info(itemid).is_none() {
-        return Err("pack tidak dikenal".to_string());
+        return Err("Gói thẻ không hợp lệ".to_string());
     }
     let count = params
         .get("count")
-        .map(|c| as_int(c, 1, 999, "jumlah"))
+        .map(|c| as_int(c, 1, 999, "số lượng"))
         .transpose()?
         .unwrap_or(1) as u64;
     state::give_pack(&mut st, itemid, count);
@@ -356,12 +356,12 @@ fn handle_bag_send(params: &HashMap<String, Value>) -> Result<Value, String> {
         .and_then(|v| if v.is_null() { None } else { v.as_u64() });
     let count = params
         .get("count")
-        .map(|v| as_int(v, 1, 999, "jumlah"))
+        .map(|v| as_int(v, 1, 999, "số lượng"))
         .transpose()?
         .unwrap_or(1) as u64;
     if let Some(pid) = pack {
         if state::get_pack_info(pid).is_none() {
-            return Err("pack tidak dikenal".to_string());
+            return Err("Gói thẻ không hợp lệ".to_string());
         }
     }
     let mut items = Vec::new();
@@ -377,30 +377,30 @@ fn handle_bag_send(params: &HashMap<String, Value>) -> Result<Value, String> {
         let spid = as_int(spid_val, 1, 1_000_000_000, "spid")? as u64;
         let grade = params
             .get("grade")
-            .map(|v| as_int(v, 1, 10, "grade"))
+            .map(|v| as_int(v, 1, 10, "cấp thẻ"))
             .transpose()?
             .unwrap_or(1);
         let names = state::names(&[spid]);
         if names.is_empty() && Path::new(state::FIFADB_PATH).exists() {
-            return Err("spid tidak ada di database".to_string());
+            return Err("spid không tồn tại trong cơ sở dữ liệu".to_string());
         }
         players.push(json!({"spid": spid, "grade": grade}));
     }
 
     if items.is_empty() && players.is_empty() {
-        return Err("isi EP, pack, atau pemain".to_string());
+        return Err("Vui lòng nhập EP, gói thẻ hoặc cầu thủ".to_string());
     }
     let title = params
         .get("title")
         .and_then(|v| v.as_str())
-        .unwrap_or("Hadiah admin");
+        .unwrap_or("Quà từ Admin");
     let title_sub: String = title.chars().take(60).collect();
     let e = state::bag_add(
         &mut st,
         &title_sub,
         items,
         players,
-        "Hadiah dari admin server.",
+        "Quà tặng từ quản trị máy chủ.",
     );
     state::save_state(&st).map_err(|e| e.to_string())?;
     Ok(json!({"id": e["_id"]}))
@@ -423,32 +423,32 @@ fn handle_daily_set(params: &HashMap<String, Value>) -> Result<Value, String> {
     let table = params
         .get("table")
         .and_then(|v| v.as_array())
-        .ok_or("table array diperlukan")?;
+        .ok_or("Cần có danh sách table")?;
     if table.is_empty() || table.len() > 31 {
-        return Err("tabel harus 1..31 hari".to_string());
+        return Err("Bảng thưởng phải từ 1..31 ngày".to_string());
     }
     let mut sanitized = Vec::new();
     for (i, row) in table.iter().enumerate() {
         let day_num = i + 1;
         let ep = row
             .get("ep")
-            .map(|v| as_int(v, 0, 1_000_000_000_000, &format!("EP hari {}", day_num)))
+            .map(|v| as_int(v, 0, 1_000_000_000_000, &format!("EP ngày {}", day_num)))
             .transpose()?
             .unwrap_or(0);
         let pack = row
             .get("pack")
             .and_then(|v| if v.is_null() { None } else { Some(v) });
         let pack_id = if let Some(p) = pack {
-            let pid = as_int(p, 1, 10_000_000_000, &format!("pack hari {}", day_num))? as u64;
+            let pid = as_int(p, 1, 10_000_000_000, &format!("gói thẻ ngày {}", day_num))? as u64;
             if state::get_pack_info(pid).is_none() {
-                return Err(format!("pack hari {} tidak dikenal", day_num));
+                return Err(format!("Gói thẻ ngày {} không hợp lệ", day_num));
             }
             Some(pid)
         } else {
             None
         };
         if ep == 0 && pack_id.is_none() {
-            return Err(format!("hari {} kosong", day_num));
+            return Err(format!("Ngày {} chưa có phần thưởng", day_num));
         }
         let mut obj = serde_json::Map::new();
         if ep > 0 {
@@ -457,7 +457,7 @@ fn handle_daily_set(params: &HashMap<String, Value>) -> Result<Value, String> {
         if let Some(pid) = pack_id {
             let count = row
                 .get("count")
-                .map(|v| as_int(v, 1, 99, "jumlah"))
+                .map(|v| as_int(v, 1, 99, "số lượng"))
                 .transpose()?
                 .unwrap_or(1);
             obj.insert("pack".to_string(), json!(pid));

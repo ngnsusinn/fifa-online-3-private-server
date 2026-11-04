@@ -4,7 +4,7 @@ use axum::{
     body::{to_bytes, Body},
     http::{header, Method, Request, StatusCode},
 };
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::net::SocketAddr;
 use tower::ServiceExt;
 
@@ -25,6 +25,11 @@ async fn test_admin_page_and_security() {
     assert_eq!(resp.status(), StatusCode::OK);
     let ctype = resp.headers().get(header::CONTENT_TYPE).unwrap().to_str().unwrap();
     assert!(ctype.contains("text/html"));
+    let html_bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let html = String::from_utf8(html_bytes.to_vec()).unwrap();
+    assert!(html.contains("Quản trị FO3"));
+    assert!(html.contains("Tổng quan"));
+    assert!(html.contains("Cầu thủ CLB"));
 
     // 2. Forbidden Host
     let req_bad_host = Request::builder()
@@ -93,6 +98,23 @@ async fn test_admin_page_and_security() {
     let body_bytes = to_bytes(resp_ep_good.into_body(), usize::MAX).await.unwrap();
     let ep_res: Value = serde_json::from_slice(&body_bytes).unwrap();
     assert_eq!(ep_res["ep"], 5000000);
+
+    // 7. Mutation API with invalid value -> error in Vietnamese
+    let req_ep_invalid = Request::builder()
+        .method(Method::POST)
+        .uri("/api/ep")
+        .header(header::HOST, "127.0.0.1:8088")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("X-FO3-Admin", "1")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::from(r#"{"set": -100}"#))
+        .unwrap();
+
+    let resp_ep_invalid = app.clone().oneshot(req_ep_invalid).await.unwrap();
+    assert_eq!(resp_ep_invalid.status(), StatusCode::OK);
+    let body_bytes_err = to_bytes(resp_ep_invalid.into_body(), usize::MAX).await.unwrap();
+    let err_res: Value = serde_json::from_slice(&body_bytes_err).unwrap();
+    assert!(err_res["error"].as_str().unwrap().contains("EP phải từ"));
 }
 
 #[tokio::test]
@@ -315,4 +337,59 @@ async fn test_http_router_and_fallbacks() {
     assert!(!ev_arr.is_empty());
     assert!(ev_arr[0].get("condition").is_some());
     assert_eq!(ev_arr[0]["condition"]["timeset"]["startdate"], "20140101");
+
+    // 14. Test /shop/list returns a JSON Array (not an object) to prevent ActionScript Error #1034
+    let req_shop = Request::builder()
+        .uri("/shop/list")
+        .header(header::HOST, "APSEODESK172")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::empty())
+        .unwrap();
+    let resp_shop = app.clone().oneshot(req_shop).await.unwrap();
+    assert_eq!(resp_shop.status(), StatusCode::OK);
+    let bytes_shop = to_bytes(resp_shop.into_body(), usize::MAX).await.unwrap();
+    let val_shop: Value = serde_json::from_slice(&bytes_shop).unwrap();
+    assert!(val_shop.is_array());
+
+    // 15. Test /coach/me/squad correctly handles PUT with nested squad and returns resources
+    let mut test_positions = Vec::new();
+    for i in 0..11 {
+        test_positions.push(json!({
+            "id": format!("8804894{}", i),
+            "pos": i,
+            "spid": 88048940 + i,
+            "starting": [1, 1, 0.5, 0.02]
+        }));
+    }
+    let squad_payload = json!({
+        "_method": "PUT",
+        "captain": "88184941",
+        "kickers": ["88199503", "88186561", "88184941", "88178509", "88193301"],
+        "squad": {
+            "captain": "88184941",
+            "formation": 1,
+            "kickers": ["88199503", "88186561", "88184941", "88178509", "88193301"],
+            "positions": test_positions
+        }
+    });
+    let req_squad = Request::builder()
+        .method(Method::POST)
+        .uri("/coach/me/squad")
+        .header(header::HOST, "APSEODESK172")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::from(squad_payload.to_string()))
+        .unwrap();
+    let resp_squad = app.clone().oneshot(req_squad).await.unwrap();
+    assert_eq!(resp_squad.status(), StatusCode::OK);
+    let bytes_sq = to_bytes(resp_squad.into_body(), usize::MAX).await.unwrap();
+    let val_sq: Value = serde_json::from_slice(&bytes_sq).unwrap();
+    assert_eq!(val_sq["result"], true);
+    assert!(val_sq.get("resources").is_some());
+    let sq_res = val_sq["resources"].as_array().unwrap();
+    assert_eq!(sq_res[0]["uri"], "/coach/me");
+    let sq_body = &sq_res[0]["body"];
+    assert_eq!(sq_body["team"]["captain"], "88184941");
+    let saved_pos = sq_body["team"]["squad"]["positions"].as_array().unwrap();
+    assert_eq!(saved_pos.len(), 11);
+    assert_eq!(saved_pos[0]["id"], "88048940");
 }
