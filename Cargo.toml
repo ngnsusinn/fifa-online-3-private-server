@@ -1,0 +1,73 @@
+[package]
+name = "fo3-server"
+version = "0.1.0"
+edition = "2021"
+authors = ["FO3 Revival Team"]
+description = "High-performance Rust implementation of FIFA Online 3 Private Server"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.7", features = ["tokio"] }
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+tower = "0.5"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+byteorder = "1.5"
+blowfish = "0.9"
+cbc = "0.1"
+cipher = { version = "0.4", features = ["block-padding"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+regex = "1"
+rand = "0.8"
+flate2 = "1.0"
+rcgen = "0.13"
+rustls = "0.23"
+rustls-pki-types = "1"
+chrono = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[[bin]]
+name = "start_all"
+path = "src/bin/start_all.rs"
+
+[[bin]]
+name = "server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "messenger"
+path = "src/bin/messenger.rs"
+
+[[bin]]
+name = "http_config"
+path = "src/bin/http_config.rs"
+
+[[bin]]
+name = "test_client"
+path = "src/bin/test_client.rs"
+
+[[bin]]
+name = "analyze_capture"
+path = "src/bin/analyze_capture.rs"
+
+[[bin]]
+name = "extract_fifadb"
+path = "src/bin/extract_fifadb.rs"
+
+[[bin]]
+name = "refpack"
+path = "src/bin/refpack.rs"
+
+[[bin]]
+name = "bigdir"
+path = "src/bin/bigdir.rs"
+
+[[bin]]
+name = "eadb"
+path = "src/bin/eadb.rs"
+
+[[bin]]
+name = "ealayer3"
+path = "src/bin/ealayer3.rs"

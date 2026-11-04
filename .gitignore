@@ -1,0 +1,18 @@
+# Data extracted from or written for your own game install (not redistributable)
+gamedata/
+captures/
+backup/
+music/
+
+# Local TLS key + cert (generate your own, see README)
+certs/*.pem
+certs/*.key
+
+# Build output and caches
+launcher/*.exe
+__pycache__/
+*.pyc
+.impeccable/
+
+# Rust target build output
+target/
