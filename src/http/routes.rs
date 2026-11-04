@@ -193,15 +193,17 @@ fn handle_exact_or_pattern(
                     "ind".to_string()
                 }
             });
-            let host_clean = if !host.is_empty() {
-                host.split(':').next().unwrap_or("APSEODESK172")
+            let url = if host.contains("8080") {
+                format!("http://127.0.0.1:8080/{}", CDN_PREFIX)
+            } else if !host.is_empty() {
+                format!("https://{}/{}", host.split(':').next().unwrap_or("127.0.0.1"), CDN_PREFIX)
             } else {
-                "APSEODESK172"
+                format!("https://127.0.0.1/{}", CDN_PREFIX)
             };
             Some(json!({
                 "result": true,
                 "language": lang,
-                "url": format!("https://{}/{}", host_clean, CDN_PREFIX)
+                "url": url
             }))
         }
         "/info/server/time" => Some(json!({

@@ -13,6 +13,14 @@ echo   - Blaze Redirector: 127.0.0.1:28000
 echo   - Blaze Noti:       127.0.0.1:28001
 echo ========================================================
 echo.
+
+rem Auto-ensure hosts entry for APSEODESK172
+findstr /I "APSEODESK172" "%windir%\System32\drivers\etc\hosts" >nul 2>&1
+if errorlevel 1 (
+    echo Ensuring 127.0.0.1 APSEODESK172 in hosts file...
+    powershell -NoProfile -Command "Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -Command \"Add-Content -Path C:\Windows\System32\drivers\etc\hosts -Value \"\"`n127.0.0.1 APSEODESK172\"\"\"' -Wait"
+)
+
 echo Starting all servers... (Press Ctrl+C to stop)
 echo.
 
