@@ -109,7 +109,7 @@
   </nav>
 
   <main>
-    <div class="status" id="status" role="status" aria-live="polite">Thay đổi được lưu ngay trên máy chủ; game sẽ hiển thị sau khi khởi động lại hoặc sau khi tải lại màn hình CLB.</div>
+    <div class="status" id="status" role="status" aria-live="polite">Thay đổi được lưu ngay trên máy chủ. Quà tặng EP và Gói thẻ gửi từ trang quản trị sẽ chuyển vào Kho vật phẩm → Hộp thư trong game để bấm "Nhận quà".</div>
 
     <section id="ringkasan">
       <h2>Tổng quan CLB</h2>
@@ -118,9 +118,9 @@
       <h3>Số dư EP</h3>
       <form class="row" id="epForm">
         <label class="f">Số lượng<input type="number" id="epValue" min="0" step="1000" required></label>
-        <button class="b primary" data-mode="add">Cộng EP</button>
+        <button class="b primary" data-mode="add">Cộng EP (Gửi vào Hộp thư)</button>
         <button class="b" data-mode="sub">Trừ EP</button>
-        <button class="b" data-mode="set">Đặt số dư này</button>
+        <button class="b" data-mode="set">Đặt số dư trực tiếp</button>
       </form>
     </section>
 
@@ -150,14 +150,15 @@
 
     <section id="item" hidden>
       <h2>Gói thẻ &amp; Hộp thư quà</h2>
-      <p class="lead">Gói thẻ được chuyển vào Kho vật phẩm → Gói thẻ cầu thủ. Quà Hộp thư chuyển vào Kho vật phẩm → Hộp thư và nhận bằng nút Nhận quà.</p>
-      <h3>Thêm gói thẻ vào Kho vật phẩm</h3>
+      <p class="lead">Gói thẻ và quà tặng được gửi vào Kho vật phẩm → Hộp thư. Trong game, vào Hộp thư và bấm Nhận để nhận quà trực tiếp.</p>
+      <h3>Gửi gói thẻ vào Hộp thư</h3>
       <form class="row" id="packForm">
         <label class="f">Gói thẻ<select id="packSel"></select></label>
         <label class="f">Số lượng<input type="number" id="packCount" min="1" max="999" value="1"></label>
-        <button class="b primary">Thêm gói</button>
+        <label class="check"><input type="checkbox" id="packDirect"> Thêm trực tiếp vào Kho (không qua Hộp thư)</label>
+        <button class="b primary">Gửi gói vào Hộp thư</button>
       </form>
-      <h3>Gửi quà vào Hộp thư</h3>
+      <h3>Gửi quà tùy chọn vào Hộp thư</h3>
       <form class="row" id="bagForm">
         <label class="f">Tiêu đề<input class="wide" id="bagTitle" value="Quà từ Admin" maxlength="60"></label>
         <label class="f">EP<input type="number" id="bagEp" min="0" step="1000" value="0"></label>
@@ -333,7 +334,12 @@ $("#epForm").addEventListener("click", e => {
   const raw = $("#epValue").value, n = Number(raw);
   if (raw === "" || !Number.isFinite(n) || n < 0) return say("Vui lòng nhập số lượng EP trước.", "err");
   const body = mode === "set" ? {set: n} : {add: mode === "sub" ? -n : n};
-  act(async () => { const r = await api("ep", body); await loaders.ringkasan(); say(`Số dư EP hiện tại là ${fmt(r.ep)}.`, "ok"); });
+  act(async () => {
+    const r = await api("ep", body);
+    await loaders.ringkasan();
+    if (mode === "add") say(`Đã gửi ${fmt(n)} EP vào Hộp thư quà của tài khoản (vào game mở Kho vật phẩm > Hộp thư để nhận quà).`, "ok");
+    else say(`Số dư EP hiện tại là ${fmt(r.ep)}.`, "ok");
+  });
 });
 
 $("#playerFilter").addEventListener("input", () => loaders.pemain());
@@ -371,13 +377,15 @@ $("#searchRows").addEventListener("click", e => {
 $("#packForm").addEventListener("submit", e => {
   e.preventDefault();
   const name = $("#packSel").selectedOptions[0].text, count = Number($("#packCount").value);
-  act(() => api("give_pack", {itemid: Number($("#packSel").value), count}), `Đã thêm ${count}× ${name} vào Kho vật phẩm.`);
+  const direct = $("#packDirect").checked;
+  act(() => api("give_pack", {itemid: Number($("#packSel").value), count, direct}),
+    direct ? `Đã thêm ${count}× ${name} trực tiếp vào Kho vật phẩm.` : `Đã gửi ${count}× ${name} vào Hộp thư quà (vào game mở Kho vật phẩm > Hộp thư để nhận quà).`);
 });
 $("#bagForm").addEventListener("submit", e => {
   e.preventDefault();
   const body = {title: $("#bagTitle").value, ep: Number($("#bagEp").value) || 0, pack: $("#bagPack").value ? Number($("#bagPack").value) : null,
                 count: Number($("#bagCount").value) || 1, spid: $("#bagSpid").value ? Number($("#bagSpid").value) : null, grade: Number($("#bagGrade").value)};
-  act(() => api("bag_send", body), `Đã gửi phần thưởng "${body.title}" vào Hộp thư.`);
+  act(() => api("bag_send", body), `Đã gửi phần thưởng "${body.title}" vào Hộp thư quà (vào game mở Kho vật phẩm > Hộp thư để nhận quà).`);
 });
 
 $("#dailyRows").addEventListener("click", e => {

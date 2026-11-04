@@ -149,6 +149,7 @@ fn get_patterns() -> &'static Vec<(Regex, &'static str)> {
     PATTERNS.get_or_init(|| {
         vec![
             (Regex::new(r"^/item/(\w+)/use$").unwrap(), "item_use"),
+            (Regex::new(r"^/item/depottoitem/(\w+)$").unwrap(), "depot_to_item"),
             (Regex::new(r"^/bag/(\w+)/unpack$").unwrap(), "bag_unpack"),
             (
                 Regex::new(r"^/coach/(\w+)/postponed$").unwrap(),
@@ -328,9 +329,9 @@ fn build_coach_me(st: &mut Value, slot: usize) -> Value {
         "summary": summary,
         "career": {"appat": "2026-11-04T00:00:00.000Z"},
         "stadium": {"id": 1},
-        "items": [],
+        "items": state::coach_items(st, slot, "items"),
         "matchstats": [],
-        "scouters": [],
+        "scouters": state::coach_scouters(st, slot),
         "cups": [],
         "formations": team.get("formations").cloned().unwrap_or(json!([])),
         "teamsquadlist": {"preset": [squad_val]}
@@ -750,7 +751,7 @@ fn handle_exact_or_pattern(
                     "result": true,
                     "resources": [
                         {"uri": "/monthlypack", "body": []},
-                        {"uri": "/bag", "body": state::my_coach(&st).get("bag").cloned().unwrap_or(json!([]))}
+                        {"uri": "/bag", "body": state::bag_list(&st)}
                     ]
                 }))
             } else {
@@ -760,12 +761,89 @@ fn handle_exact_or_pattern(
         "/specifictarget" => Some(json!({"issell": true, "targets": []})),
         "/bag" => {
             let st = state::load_state();
-            let coach = state::my_coach(&st);
+            Some(json!(state::bag_list(&st)))
+        },
+        "/bag/unpackall" => {
+            let mut st = state::load_state();
+            let slot = state::default_slot(&st);
+            let req: Value = serde_json::from_slice(body).unwrap_or(json!({}));
+            let req_ids: Vec<String> = req
+                .get("reqUnpackItems")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|s| s.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let bag_entries = state::my_coach(&st)
+                .get("bag")
+                .and_then(|b| b.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            for entry in &bag_entries {
+                let entry_id = entry.get("_id").and_then(|v| v.as_str()).unwrap_or("");
+                if req_ids.is_empty() || req_ids.iter().any(|id| id == entry_id) {
+                    state::bag_apply(&mut st, slot, entry);
+                }
+            }
+            let _ = state::save_state(&st);
+            let coach_me_val = build_coach_me(&mut st, slot);
             Some(json!({
-                "bag": coach.get("bag").cloned().unwrap_or(json!([]))
+                "result": true,
+                "overdueitems": [],
+                "resources": [
+                    {"uri": "/coach/me", "body": coach_me_val},
+                    {"uri": "/bag", "body": state::bag_list(&st)}
+                ]
             }))
-        }
-        "/bag/unpackall" => Some(json!({"result": true})),
+        },
+        "/item/depot" => {
+            let st = state::load_state();
+            let slot = state::default_slot(&st);
+            Some(json!(state::coach_items(&st, slot, "depot")))
+        },
+        "/items/itemtodepot" => {
+            let mut st = state::load_state();
+            let slot = state::default_slot(&st);
+            let req: Value = serde_json::from_slice(body).unwrap_or(json!({}));
+            let move_ids: Vec<String> = req
+                .get("moveitems")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|s| s.as_str().map(|s| s.to_string())).collect())
+                .unwrap_or_default();
+            for mid in move_ids {
+                state::stack_move(&mut st, slot, &mid, "items", "depot");
+            }
+            let _ = state::save_state(&st);
+            let coach_me_val = build_coach_me(&mut st, slot);
+            Some(json!({
+                "result": true,
+                "resources": [
+                    {"uri": "/coach/me", "body": coach_me_val},
+                    {"uri": "/item/depot", "body": state::coach_items(&st, slot, "depot")}
+                ]
+            }))
+        },
+        "/static/cache/item" => {
+            let req: Value = serde_json::from_slice(body).unwrap_or(json!({}));
+            let mut out = serde_json::Map::new();
+            if let Some(ids) = req.get("itemids").and_then(|v| v.as_array()) {
+                for id_val in ids {
+                    let id_num = id_val
+                        .as_u64()
+                        .or_else(|| id_val.as_str().and_then(|s| s.parse::<u64>().ok()))
+                        .unwrap_or(0);
+                    if id_num > 0 {
+                        out.insert(id_num.to_string(), state::item_def(id_num));
+                    }
+                }
+            }
+            Some(Value::Object(out))
+        },
+        "/items/newitem" | "/players/newplayer" => Some(json!({"result": true})),
         "/static/info/teamcolor" => Some(json!({
             "teamColors": crate::http::team_color::get_all_team_colors(),
             "teamColorSpecials": {}
@@ -779,8 +857,72 @@ fn handle_exact_or_pattern(
             for (re, name) in get_patterns() {
                 if let Some(caps) = re.captures(path) {
                     return match *name {
-                        "item_use" => Some(json!({"result": true})),
-                        "bag_unpack" => Some(json!({"result": true})),
+                        "item_use" => {
+                            let item_id = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                            let mut st = state::load_state();
+                            let slot = state::default_slot(&st);
+                            match state::use_item_or_pack(&mut st, slot, item_id) {
+                                Ok((player_val, _)) => {
+                                    let _ = state::save_state(&st);
+                                    let coach_me_val = build_coach_me(&mut st, slot);
+                                    let mut resp = json!({
+                                        "result": true,
+                                        "resources": [
+                                            {"uri": "/coach/me", "body": coach_me_val}
+                                        ]
+                                    });
+                                    if !player_val.is_null() {
+                                        resp["player"] = player_val;
+                                    }
+                                    Some(resp)
+                                }
+                                Err(err) => Some(json!({"result": false, "reason": err})),
+                            }
+                        }
+                        "bag_unpack" => {
+                            let bid = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                            let mut st = state::load_state();
+                            let slot = state::default_slot(&st);
+                            let bag_entry = state::my_coach(&st)
+                                .get("bag")
+                                .and_then(|b| b.as_array())
+                                .and_then(|arr| {
+                                    arr.iter()
+                                        .find(|e| e.get("_id").and_then(|v| v.as_str()) == Some(bid))
+                                        .cloned()
+                                });
+
+                            if let Some(entry) = bag_entry {
+                                state::bag_apply(&mut st, slot, &entry);
+                                let _ = state::save_state(&st);
+                                let coach_me_val = build_coach_me(&mut st, slot);
+                                Some(json!({
+                                    "result": true,
+                                    "overdueitems": [],
+                                    "resources": [
+                                        {"uri": "/coach/me", "body": coach_me_val},
+                                        {"uri": "/bag", "body": state::bag_list(&st)}
+                                    ]
+                                }))
+                            } else {
+                                Some(json!({"result": false, "reason": "ITEM_USE_ERROR"}))
+                            }
+                        }
+                        "depot_to_item" => {
+                            let iid = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                            let mut st = state::load_state();
+                            let slot = state::default_slot(&st);
+                            state::stack_move(&mut st, slot, iid, "depot", "items");
+                            let _ = state::save_state(&st);
+                            let coach_me_val = build_coach_me(&mut st, slot);
+                            Some(json!({
+                                "result": true,
+                                "resources": [
+                                    {"uri": "/coach/me", "body": coach_me_val},
+                                    {"uri": "/item/depot", "body": state::coach_items(&st, slot, "depot")}
+                                ]
+                            }))
+                        }
                         "coach_postponed" => Some(json!({"result": true})),
                         "stadium" => {
                             let id = caps.get(1).map(|m| m.as_str()).unwrap_or("1");

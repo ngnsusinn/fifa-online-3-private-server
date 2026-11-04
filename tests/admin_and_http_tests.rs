@@ -115,6 +115,38 @@ async fn test_admin_page_and_security() {
     let body_bytes_err = to_bytes(resp_ep_invalid.into_body(), usize::MAX).await.unwrap();
     let err_res: Value = serde_json::from_slice(&body_bytes_err).unwrap();
     assert!(err_res["error"].as_str().unwrap().contains("EP phải từ"));
+
+    // 8. Mutation API: /api/ep with add -> sends to Bag as gift
+    let req_ep_add = Request::builder()
+        .method(Method::POST)
+        .uri("/api/ep")
+        .header(header::HOST, "127.0.0.1:8088")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("X-FO3-Admin", "1")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::from(r#"{"add": 1000000}"#))
+        .unwrap();
+    let resp_ep_add = app.clone().oneshot(req_ep_add).await.unwrap();
+    assert_eq!(resp_ep_add.status(), StatusCode::OK);
+    let bytes_add = to_bytes(resp_ep_add.into_body(), usize::MAX).await.unwrap();
+    let val_add: Value = serde_json::from_slice(&bytes_add).unwrap();
+    assert_eq!(val_add["ok"], true);
+
+    // 9. Mutation API: /api/give_pack -> sends pack into Bag as gift
+    let req_give_pack = Request::builder()
+        .method(Method::POST)
+        .uri("/api/give_pack")
+        .header(header::HOST, "127.0.0.1:8088")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("X-FO3-Admin", "1")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::from(r#"{"itemid": 28001, "count": 2}"#))
+        .unwrap();
+    let resp_give_pack = app.clone().oneshot(req_give_pack).await.unwrap();
+    assert_eq!(resp_give_pack.status(), StatusCode::OK);
+    let bytes_gp = to_bytes(resp_give_pack.into_body(), usize::MAX).await.unwrap();
+    let val_gp: Value = serde_json::from_slice(&bytes_gp).unwrap();
+    assert_eq!(val_gp["ok"], true);
 }
 
 #[tokio::test]
@@ -395,4 +427,123 @@ async fn test_http_router_and_fallbacks() {
     let saved_pos = sq_body["team"]["squad"]["positions"].as_array().unwrap();
     assert_eq!(saved_pos.len(), 11);
     assert_eq!(saved_pos[0]["id"], "88048940");
+
+    // 16. Test /bag returns a JSON Array with valid bag entry format
+    let req_bag = Request::builder()
+        .uri("/bag")
+        .header(header::HOST, "APSEODESK172")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::empty())
+        .unwrap();
+    let resp_bag = app.clone().oneshot(req_bag).await.unwrap();
+    assert_eq!(resp_bag.status(), StatusCode::OK);
+    let bytes_bag = to_bytes(resp_bag.into_body(), usize::MAX).await.unwrap();
+    let val_bag: Value = serde_json::from_slice(&bytes_bag).unwrap();
+    assert!(val_bag.is_array());
+
+    // 17. Test /static/cache/item returns definitions
+    let req_item_cache = Request::builder()
+        .method(Method::POST)
+        .uri("/static/cache/item")
+        .header(header::HOST, "APSEODESK172")
+        .header(header::CONTENT_TYPE, "application/json")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::from(r#"{"itemids": [1, 801, 28001]}"#))
+        .unwrap();
+    let resp_item_cache = app.clone().oneshot(req_item_cache).await.unwrap();
+    assert_eq!(resp_item_cache.status(), StatusCode::OK);
+    let bytes_ic = to_bytes(resp_item_cache.into_body(), usize::MAX).await.unwrap();
+    let val_ic: Value = serde_json::from_slice(&bytes_ic).unwrap();
+    assert!(val_ic.get("1").is_some());
+    assert_eq!(val_ic["1"]["name"], "EP");
+    assert!(val_ic.get("801").is_some());
+    assert!(val_ic.get("28001").is_some());
+
+    // 18. Test admin sending gift -> /bag shows it -> /bag/<id>/unpack claims it
+    let admin_app = create_admin_router();
+    let req_admin_gift = Request::builder()
+        .method(Method::POST)
+        .uri("/api/bag_send")
+        .header(header::HOST, "127.0.0.1:8088")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("X-FO3-Admin", "1")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::from(
+            r#"{"title": "Test Gift EP", "ep": 50000, "pack": 28001, "count": 1}"#,
+        ))
+        .unwrap();
+    let resp_admin_gift = admin_app.clone().oneshot(req_admin_gift).await.unwrap();
+    assert_eq!(resp_admin_gift.status(), StatusCode::OK);
+    let bytes_ag = to_bytes(resp_admin_gift.into_body(), usize::MAX).await.unwrap();
+    let val_ag: Value = serde_json::from_slice(&bytes_ag).unwrap();
+    let gift_id = val_ag["id"].as_str().unwrap();
+
+    // Verify it appears in /bag
+    let req_bag2 = Request::builder()
+        .uri("/bag")
+        .header(header::HOST, "APSEODESK172")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::empty())
+        .unwrap();
+    let resp_bag2 = app.clone().oneshot(req_bag2).await.unwrap();
+    let bytes_bag2 = to_bytes(resp_bag2.into_body(), usize::MAX).await.unwrap();
+    let val_bag2: Value = serde_json::from_slice(&bytes_bag2).unwrap();
+    let bag_arr = val_bag2.as_array().unwrap();
+    assert!(bag_arr.iter().any(|e| e["_id"] == gift_id));
+
+    // Claim via /bag/<id>/unpack
+    let req_unpack = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/bag/{}/unpack", gift_id))
+        .header(header::HOST, "APSEODESK172")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::empty())
+        .unwrap();
+    let resp_unpack = app.clone().oneshot(req_unpack).await.unwrap();
+    assert_eq!(resp_unpack.status(), StatusCode::OK);
+    let bytes_up = to_bytes(resp_unpack.into_body(), usize::MAX).await.unwrap();
+    let val_up: Value = serde_json::from_slice(&bytes_up).unwrap();
+    assert_eq!(val_up["result"], true);
+    assert!(val_up.get("resources").is_some());
+    let up_res = val_up["resources"].as_array().unwrap();
+    assert_eq!(up_res[0]["uri"], "/coach/me");
+    assert_eq!(up_res[1]["uri"], "/bag");
+
+    // 19. Test /item/depot returns array
+    let req_depot = Request::builder()
+        .uri("/item/depot")
+        .header(header::HOST, "APSEODESK172")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::empty())
+        .unwrap();
+    let resp_depot = app.clone().oneshot(req_depot).await.unwrap();
+    assert_eq!(resp_depot.status(), StatusCode::OK);
+    let bytes_depot = to_bytes(resp_depot.into_body(), usize::MAX).await.unwrap();
+    let val_depot: Value = serde_json::from_slice(&bytes_depot).unwrap();
+    assert!(val_depot.is_array());
+
+    // 20. Test /item/<id>/use opens a pack
+    let coach_me_body = &up_res[0]["body"];
+    let items_in_coach = coach_me_body["items"].as_array().unwrap();
+    let pack_stack = items_in_coach
+        .iter()
+        .find(|i| i["itemid"] == 28001)
+        .expect("Pack 28001 should be in items after unpack");
+    let pack_item_id = pack_stack["_id"].as_str().unwrap();
+
+    let req_use_pack = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/item/{}/use", pack_item_id))
+        .header(header::HOST, "APSEODESK172")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::empty())
+        .unwrap();
+    let resp_use_pack = app.clone().oneshot(req_use_pack).await.unwrap();
+    assert_eq!(resp_use_pack.status(), StatusCode::OK);
+    let bytes_upk = to_bytes(resp_use_pack.into_body(), usize::MAX).await.unwrap();
+    let val_upk: Value = serde_json::from_slice(&bytes_upk).unwrap();
+    assert_eq!(val_upk["result"], true);
+    assert!(val_upk.get("player").is_some());
+    assert!(val_upk["player"].get("spid").is_some());
+    assert!(val_upk.get("resources").is_some());
 }

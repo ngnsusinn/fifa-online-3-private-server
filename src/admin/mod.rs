@@ -176,17 +176,30 @@ fn handle_packs(_params: &HashMap<String, Value>) -> Result<Value, String> {
 
 fn handle_ep(params: &HashMap<String, Value>) -> Result<Value, String> {
     let mut st = state::load_state();
+    let direct = params.get("direct").and_then(|v| v.as_bool()).unwrap_or(false);
     if let Some(set_val) = params.get("set") {
         let n = as_int(set_val, 0, 10_000_000_000_000, "EP")?;
         let coach = state::my_coach_mut(&mut st);
         coach["ep"] = json!(n);
     } else if let Some(add_val) = params.get("add") {
         let n = as_int(add_val, -10_000_000_000_000, 10_000_000_000_000, "EP")?;
-        state::add_ep(&mut st, n);
-        let coach = state::my_coach_mut(&mut st);
-        let cur = coach.get("ep").and_then(|v| v.as_i64()).unwrap_or(0);
-        if cur < 0 {
-            coach["ep"] = json!(0);
+        if n > 0 && !direct {
+            let title = "Quà tặng EP";
+            let msg = format!("Quà tặng {} EP từ ban quản trị máy chủ.", state::format_number(n as u64));
+            state::bag_add(
+                &mut st,
+                title,
+                vec![json!({"itemid": state::EP_ITEM, "count": n})],
+                vec![],
+                &msg,
+            );
+        } else {
+            state::add_ep(&mut st, n);
+            let coach = state::my_coach_mut(&mut st);
+            let cur = coach.get("ep").and_then(|v| v.as_i64()).unwrap_or(0);
+            if cur < 0 {
+                coach["ep"] = json!(0);
+            }
         }
     } else {
         return Err("Cần tham số EP add hoặc set".to_string());
@@ -196,7 +209,7 @@ fn handle_ep(params: &HashMap<String, Value>) -> Result<Value, String> {
         .and_then(|v| v.as_i64())
         .unwrap_or(0);
     state::save_state(&st).map_err(|e| e.to_string())?;
-    Ok(json!({"ep": ep}))
+    Ok(json!({"ep": ep, "ok": true}))
 }
 
 fn handle_player_add(params: &HashMap<String, Value>) -> Result<Value, String> {
@@ -331,15 +344,27 @@ fn handle_give_pack(params: &HashMap<String, Value>) -> Result<Value, String> {
         10_000_000_000,
         "gói thẻ",
     )? as u64;
-    if state::get_pack_info(itemid).is_none() {
-        return Err("Gói thẻ không hợp lệ".to_string());
-    }
+    let pack_info = state::get_pack_info(itemid).ok_or("Gói thẻ không hợp lệ")?;
     let count = params
         .get("count")
         .map(|c| as_int(c, 1, 999, "số lượng"))
         .transpose()?
         .unwrap_or(1) as u64;
-    state::give_pack(&mut st, itemid, count);
+
+    let direct = params.get("direct").and_then(|v| v.as_bool()).unwrap_or(false);
+    if direct {
+        state::give_pack(&mut st, itemid, count);
+    } else {
+        let title = format!("Gói thẻ: {}", pack_info.0);
+        let msg = format!("Quà tặng {}× {} từ ban quản trị máy chủ.", count, pack_info.0);
+        state::bag_add(
+            &mut st,
+            &title,
+            vec![json!({"itemid": itemid, "count": count})],
+            vec![],
+            &msg,
+        );
+    }
     state::save_state(&st).map_err(|e| e.to_string())?;
     Ok(json!({"ok": true}))
 }

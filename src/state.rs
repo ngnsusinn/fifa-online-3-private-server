@@ -577,6 +577,359 @@ pub fn bag_add(
     entry
 }
 
+pub const LR_TICKET: u64 = 801;
+
+pub fn lr_ticket_item() -> Value {
+    json!({
+        "_id": "lockerroomticket",
+        "id": "lockerroomticket",
+        "itemid": LR_TICKET,
+        "remains": 1,
+        "count": 1,
+        "expireable": true,
+        "expired": false,
+        "createat": 1483228800000i64,
+        "expireat": VIP_UNTIL,
+        "staticdata": {
+            "itemid": LR_TICKET,
+            "productid": LR_TICKET,
+            "name": "Tiket locker room",
+            "category": "LOCKERROOM",
+            "type": "LOCKERROOM",
+            "unit": "COUNT",
+            "itemicon": LR_TICKET
+        }
+    })
+}
+
+pub fn item_def(itemid: u64) -> Value {
+    if itemid == EP_ITEM {
+        return json!({
+            "itemid": EP_ITEM,
+            "productid": EP_ITEM,
+            "name": "EP",
+            "category": "EP",
+            "type": "EP",
+            "unit": "EP",
+            "itemicon": EP_ITEM
+        });
+    }
+    if itemid == LR_TICKET {
+        return json!({
+            "itemid": LR_TICKET,
+            "productid": LR_TICKET,
+            "name": "Tiket locker room",
+            "category": "LOCKERROOM",
+            "type": "LOCKERROOM",
+            "unit": "COUNT",
+            "itemicon": LR_TICKET
+        });
+    }
+    if let Some((name, price)) = get_pack_info(itemid) {
+        return json!({
+            "itemid": itemid,
+            "productid": itemid,
+            "name": name,
+            "category": "PLAYERPACK",
+            "type": "CUSTOM",
+            "unit": "COUNT",
+            "itemicon": itemid,
+            "currency": "ep",
+            "bunches": [
+                {"bunch": 1, "price": price},
+                {"bunch": 10, "price": (price as f64 * 9.5) as u64}
+            ]
+        });
+    }
+    json!({
+        "itemid": itemid,
+        "productid": itemid,
+        "name": format!("Item {}", itemid),
+        "category": "PLAYERPACK",
+        "type": "CUSTOM",
+        "unit": "COUNT",
+        "itemicon": itemid
+    })
+}
+
+pub fn coach_items(st: &Value, slot: usize, where_key: &str) -> Vec<Value> {
+    let mut out = Vec::new();
+    let coach = if let Some(coaches) = st.get("coaches").and_then(|v| v.as_array()) {
+        coaches
+            .iter()
+            .find(|c| c.get("slot").and_then(|v| v.as_u64()) == Some(slot as u64))
+            .unwrap_or_else(|| my_coach(st))
+    } else {
+        my_coach(st)
+    };
+
+    if let Some(items) = coach.get(where_key).and_then(|v| v.as_array()) {
+        for it in items {
+            let iid_str = it.get("_id").and_then(|v| v.as_str()).unwrap_or("");
+            let itemid = it.get("itemid").and_then(|v| v.as_u64()).unwrap_or(0);
+            let remains = it.get("remains").and_then(|v| v.as_u64()).unwrap_or(0);
+            if itemid > 0 && remains > 0 {
+                out.push(json!({
+                    "_id": iid_str,
+                    "id": iid_str,
+                    "itemid": itemid,
+                    "remains": remains,
+                    "count": remains,
+                    "expireable": true,
+                    "expired": false,
+                    "staticdata": item_def(itemid),
+                }));
+            }
+        }
+    }
+    if where_key == "items" {
+        out.push(lr_ticket_item());
+    }
+    out
+}
+
+pub fn bag_list(st: &Value) -> Vec<Value> {
+    let mut out = Vec::new();
+    let coach = my_coach(st);
+    if let Some(bag) = coach.get("bag").and_then(|v| v.as_array()) {
+        for e in bag {
+            let iid_str = e.get("_id").and_then(|v| v.as_str()).unwrap_or("");
+            let title = e.get("title").and_then(|v| v.as_str()).unwrap_or("Quà");
+            let msg = e.get("msg").and_then(|v| v.as_str()).unwrap_or("Quà từ server.");
+            let createdat = e.get("createdat").and_then(|v| v.as_i64()).unwrap_or_else(|| Utc::now().timestamp());
+            let date = w3c_time(createdat);
+            let items = e.get("items").cloned().unwrap_or_else(|| json!([]));
+            let players = e.get("players").cloned().unwrap_or_else(|| json!([]));
+
+            let mut bundleicon = EP_ITEM;
+            if let Some(items_arr) = items.as_array() {
+                for it in items_arr {
+                    let it_id = it.get("itemid").and_then(|v| v.as_u64()).unwrap_or(0);
+                    if it_id != EP_ITEM && it_id != 0 {
+                        bundleicon = it_id;
+                        break;
+                    }
+                }
+            }
+
+            out.push(json!({
+                "_id": iid_str,
+                "id": iid_str,
+                "type": e.get("type").and_then(|v| v.as_str()).unwrap_or("event"),
+                "title": title,
+                "msg": msg,
+                "date": date,
+                "items": items,
+                "players": players,
+                "bundleicon": bundleicon,
+            }));
+        }
+    }
+    out
+}
+
+pub fn bag_apply(st: &mut Value, slot: usize, entry: &Value) {
+    let entry_id = entry.get("_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+    if let Some(items) = entry.get("items").and_then(|v| v.as_array()) {
+        for it in items {
+            let itemid = it.get("itemid").and_then(|v| v.as_u64()).unwrap_or(0);
+            let count = it.get("count").and_then(|v| v.as_u64()).unwrap_or(1);
+            if itemid == EP_ITEM {
+                add_ep(st, count as i64);
+            } else if itemid > 0 {
+                give_pack(st, itemid, count);
+            }
+        }
+    }
+
+    if let Some(players) = entry.get("players").and_then(|v| v.as_array()) {
+        let slot_str = slot.to_string();
+        if let Some(teams) = st.get_mut("teams").and_then(|t| t.as_object_mut()) {
+            if let Some(team) = teams.get_mut(&slot_str) {
+                for p in players {
+                    let spid = p.get("spid").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let grade = p.get("grade").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+                    if spid > 0 {
+                        add_player(team, spid, grade);
+                    }
+                }
+            }
+        }
+    }
+
+    let coach = my_coach_mut(st);
+    if let Some(bag) = coach.get_mut("bag").and_then(|v| v.as_array_mut()) {
+        bag.retain(|e| e.get("_id").and_then(|v| v.as_str()) != Some(&entry_id));
+    }
+}
+
+pub fn stack_move(st: &mut Value, _slot: usize, item_id: &str, src: &str, dst: &str) -> bool {
+    let coach = my_coach_mut(st);
+    let mut moved: Option<Value> = None;
+    if let Some(src_arr) = coach.get_mut(src).and_then(|v| v.as_array_mut()) {
+        if let Some(pos) = src_arr.iter().position(|i| i.get("_id").and_then(|v| v.as_str()) == Some(item_id)) {
+            moved = Some(src_arr.remove(pos));
+        }
+    }
+    if let Some(it) = moved {
+        let itemid = it.get("itemid").and_then(|v| v.as_u64()).unwrap_or(0);
+        let remains = it.get("remains").and_then(|v| v.as_u64()).unwrap_or(0);
+        if coach.get(dst).is_none() {
+            coach[dst] = json!([]);
+        }
+        let dst_arr = coach.get_mut(dst).and_then(|v| v.as_array_mut()).unwrap();
+        if let Some(existing) = dst_arr.iter_mut().find(|i| i.get("itemid").and_then(|v| v.as_u64()) == Some(itemid)) {
+            let cur = existing.get("remains").and_then(|v| v.as_u64()).unwrap_or(0);
+            existing["remains"] = json!(cur + remains);
+        } else {
+            dst_arr.push(it);
+        }
+        true
+    } else {
+        false
+    }
+}
+
+pub fn draw_player_for_pack(itemid: u64) -> (u64, u32) {
+    let (name, _) = get_pack_info(itemid).unwrap_or(("Player Pack", 100_000));
+
+    let grade: u32 = if name.contains("+8") {
+        rand::thread_rng().gen_range(1..=8)
+    } else if name.contains("+5") {
+        rand::thread_rng().gen_range(1..=5)
+    } else if name.contains("+3") {
+        rand::thread_rng().gen_range(1..=3)
+    } else {
+        1
+    };
+
+    if Path::new(FIFADB_PATH).exists() {
+        if let Ok(conn) = Connection::open(FIFADB_PATH) {
+            let mut conditions: Vec<&str> = Vec::new();
+            if name.contains("FW") {
+                conditions.push("preferredposition1 BETWEEN 20 AND 27");
+            } else if name.contains("MF") {
+                conditions.push("preferredposition1 BETWEEN 9 AND 19");
+            } else if name.contains("DF") {
+                conditions.push("preferredposition1 BETWEEN 1 AND 8");
+            } else if name.contains("GK") {
+                conditions.push("preferredposition1 = 0");
+            }
+
+            if name.contains("Premier League") {
+                conditions.push("leagueid = 13");
+            } else if name.contains("Bundesliga") {
+                conditions.push("leagueid = 19");
+            } else if name.contains("LaLiga") {
+                conditions.push("leagueid = 53");
+            } else if name.contains("Serie A") {
+                conditions.push("leagueid = 31");
+            } else if name.contains("Ligue 1") {
+                conditions.push("leagueid = 16");
+            }
+
+            if name.contains("70+") {
+                conditions.push("overallrating >= 70");
+            } else if name.contains("65+") {
+                conditions.push("overallrating >= 65");
+            } else if name.contains("60+") {
+                conditions.push("overallrating >= 60");
+            }
+
+            if name.contains("World Best") {
+                conditions.push("(spid / 1000000 = 88 OR overallrating >= 80)");
+            }
+
+            let where_clause = if conditions.is_empty() {
+                "WHERE overallrating >= 65".to_string()
+            } else {
+                format!("WHERE {}", conditions.join(" AND "))
+            };
+
+            let sql = format!("SELECT spid FROM players {} ORDER BY RANDOM() LIMIT 1", where_clause);
+            if let Ok(mut stmt) = conn.prepare(&sql) {
+                if let Ok(spid) = stmt.query_row([], |row| row.get::<_, u64>(0)) {
+                    return (spid, grade);
+                }
+            }
+        }
+    }
+
+    (88184941, grade)
+}
+
+pub fn use_item_or_pack(st: &mut Value, slot: usize, item_id: &str) -> Result<(Value, Option<Value>), String> {
+    let (itemid, cur_players_count) = {
+        let coach = my_coach(st);
+        let items = coach.get("items").and_then(|v| v.as_array()).ok_or("INVALID_ITEM")?;
+        let it = items.iter().find(|i| {
+            i.get("_id").and_then(|v| v.as_str()) == Some(item_id)
+                && i.get("remains").and_then(|v| v.as_u64()).unwrap_or(0) > 0
+        }).ok_or("INVALID_ITEM")?;
+        let itemid = it.get("itemid").and_then(|v| v.as_u64()).unwrap_or(0);
+
+        let slot_str = slot.to_string();
+        let team = st.get("teams").and_then(|t| t.get(&slot_str)).ok_or("INVALID_TEAM")?;
+        let count = team.get("players").and_then(|p| p.as_array()).map(|a| a.len()).unwrap_or(0);
+        (itemid, count)
+    };
+
+    if cur_players_count >= MAX_PLAYERS {
+        return Err("Exceed plyer limit".to_string());
+    }
+
+    let (spid, grade) = draw_player_for_pack(itemid);
+
+    let slot_str = slot.to_string();
+    let p = {
+        let teams = st.get_mut("teams").and_then(|t| t.as_object_mut()).ok_or("INVALID_STATE")?;
+        let team = teams.get_mut(&slot_str).ok_or("INVALID_TEAM")?;
+        add_player(team, spid, grade)
+    };
+
+    let price = card_price(spid, grade as usize);
+    let player_val = json!({
+        "_id": iid(&p),
+        "id": iid(&p),
+        "spid": spid,
+        "grade": grade,
+        "price": price
+    });
+
+    let coach = my_coach_mut(st);
+    if let Some(items) = coach.get_mut("items").and_then(|v| v.as_array_mut()) {
+        if let Some(it) = items.iter_mut().find(|i| i.get("_id").and_then(|v| v.as_str()) == Some(item_id)) {
+            let r = it.get("remains").and_then(|v| v.as_u64()).unwrap_or(1);
+            if r <= 1 {
+                items.retain(|i| i.get("_id").and_then(|v| v.as_str()) != Some(item_id));
+            } else {
+                it["remains"] = json!(r - 1);
+            }
+        }
+    }
+
+    Ok((player_val, None))
+}
+
+pub fn format_number(mut n: u64) -> String {
+    if n == 0 {
+        return "0".to_string();
+    }
+    let mut parts = Vec::new();
+    while n > 0 {
+        let rem = n % 1000;
+        n /= 1000;
+        if n > 0 {
+            parts.push(format!("{:03}", rem));
+        } else {
+            parts.push(format!("{}", rem));
+        }
+    }
+    parts.reverse();
+    parts.join(".")
+}
+
 pub fn daily_default_table() -> Vec<Value> {
     vec![
         json!({"ep": 10000}),
