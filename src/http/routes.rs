@@ -163,6 +163,7 @@ fn handle_exact_or_pattern(
     path: &str,
     _query: &str,
     body: &[u8],
+    host: &str,
 ) -> Option<Value> {
     match path {
         "/info/server/config" => {
@@ -192,11 +193,15 @@ fn handle_exact_or_pattern(
                     "ind".to_string()
                 }
             });
-            let host = std::env::var("FO3_HTTP_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+            let host_clean = if !host.is_empty() {
+                host.split(':').next().unwrap_or("APSEODESK172")
+            } else {
+                "APSEODESK172"
+            };
             Some(json!({
                 "result": true,
                 "language": lang,
-                "url": format!("https://{}/{}", host, CDN_PREFIX)
+                "url": format!("https://{}/{}", host_clean, CDN_PREFIX)
             }))
         }
         "/info/server/time" => Some(json!({
@@ -351,7 +356,17 @@ pub async fn http_handler(
     // 2. Request logging
     log_request(&method, path, &addr, host, &body);
 
-    // 3. /cdn/ static asset serving
+    // 3. Crossdomain XML for Flash
+    if path == "/crossdomain.xml" {
+        return (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "text/xml")],
+            "<?xml version=\"1.0\"?><!DOCTYPE cross-domain-policy SYSTEM \"http://www.adobe.com/xml/dtds/cross-domain-policy.dtd\"><cross-domain-policy><allow-access-from domain=\"*\" secure=\"false\"/><site-control permitted-cross-domain-policies=\"all\"/></cross-domain-policy>",
+        )
+            .into_response();
+    }
+
+    // 4. /cdn/ static asset serving
     if path.starts_with("/cdn/") {
         let rel = &path["/cdn/".len()..];
         if let Some((ctype, data)) = cdn_file(rel) {
@@ -366,10 +381,10 @@ pub async fn http_handler(
         }
     }
 
-    // 4. Synchronize state operations
+    // 5. Synchronize state operations
     let _lock = state::STATE_MUTEX.lock().unwrap();
 
-    // 5. Static responses/<path>.json fallback
+    // 6. Static responses/<path>.json fallback
     if let Some(file_data) = from_responses_file(path) {
         return (
             StatusCode::OK,
@@ -379,8 +394,8 @@ pub async fn http_handler(
             .into_response();
     }
 
-    // 6. Exact endpoints or pattern routes
-    if let Some(val) = handle_exact_or_pattern(&method, path, query, &body) {
+    // 7. Exact endpoints or pattern routes
+    if let Some(val) = handle_exact_or_pattern(&method, path, query, &body, host) {
         return (
             StatusCode::OK,
             [(header::CONTENT_TYPE, "application/json")],
