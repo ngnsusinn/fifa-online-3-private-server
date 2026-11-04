@@ -8,8 +8,11 @@ use serde_json::{json, Value};
 use std::net::SocketAddr;
 use tower::ServiceExt;
 
+static SERIAL_TEST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[tokio::test]
 async fn test_admin_page_and_security() {
+    let _test_guard = SERIAL_TEST.lock().await;
     let app = create_admin_router();
     let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
 
@@ -151,6 +154,7 @@ async fn test_admin_page_and_security() {
 
 #[tokio::test]
 async fn test_http_router_and_fallbacks() {
+    let _test_guard = SERIAL_TEST.lock().await;
     let app = create_http_router();
     let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
 
@@ -555,6 +559,7 @@ async fn test_http_router_and_fallbacks() {
 
 #[tokio::test]
 async fn test_staff_system_and_endpoints() {
+    let _test_guard = SERIAL_TEST.lock().await;
     let app = create_http_router();
     let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
 
@@ -630,6 +635,7 @@ async fn test_staff_system_and_endpoints() {
 
 #[tokio::test]
 async fn test_shop_endpoints_and_purchase() {
+    let _test_guard = SERIAL_TEST.lock().await;
     let app = create_http_router();
     let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
 
@@ -771,6 +777,7 @@ async fn test_shop_endpoints_and_purchase() {
 
 #[tokio::test]
 async fn test_miniface_cdn_and_fallback() {
+    let _test_guard = SERIAL_TEST.lock().await;
     let app = create_http_router();
     let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
 
@@ -829,6 +836,7 @@ async fn test_miniface_cdn_and_fallback() {
 
 #[tokio::test]
 async fn test_trade_system_and_flow() {
+    let _test_guard = SERIAL_TEST.lock().await;
     let app = create_http_router();
     let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
 
@@ -1117,6 +1125,7 @@ async fn test_trade_system_and_flow() {
 
 #[tokio::test]
 async fn test_transfer_price_and_player_pricing() {
+    let _test_guard = SERIAL_TEST.lock().await;
     let app = create_http_router();
     let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
 
@@ -1288,6 +1297,7 @@ async fn test_transfer_price_and_player_pricing() {
 
 #[tokio::test]
 async fn test_player_enhancement_and_pe2staticvalues() {
+    let _test_guard = SERIAL_TEST.lock().await;
     let app = create_http_router();
     let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
 
@@ -1479,6 +1489,7 @@ async fn test_player_enhancement_and_pe2staticvalues() {
 
 #[tokio::test]
 async fn test_inbox_contact_and_bag_endpoints() {
+    let _test_guard = SERIAL_TEST.lock().await;
     let app = create_http_router();
     let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
 
@@ -1744,6 +1755,7 @@ async fn test_inbox_contact_and_bag_endpoints() {
 
 #[tokio::test]
 async fn test_player_leveling_and_expplayer_endpoints() {
+    let _test_guard = SERIAL_TEST.lock().await;
     let app = create_http_router();
     let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
 
@@ -1950,4 +1962,211 @@ async fn test_player_leveling_and_expplayer_endpoints() {
     let val_m_get: Value = serde_json::from_slice(&bytes_m_get).unwrap();
     assert_eq!(val_m_get["id"], match_id);
     assert_eq!(val_m_get["stage"], "closed");
+}
+
+#[tokio::test]
+async fn test_market_endpoints_full_lifecycle() {
+    let _test_guard = SERIAL_TEST.lock().await;
+    let app = create_http_router();
+    let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
+
+    // 1. GET /transfer/top/50
+    let req_top = Request::builder()
+        .uri("/transfer/top/50")
+        .header(header::HOST, "APSEODESK172")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::empty())
+        .unwrap();
+    let resp_top = app.clone().oneshot(req_top).await.unwrap();
+    assert_eq!(resp_top.status(), StatusCode::OK);
+    let bytes_top = to_bytes(resp_top.into_body(), usize::MAX).await.unwrap();
+    let val_top: Value = serde_json::from_slice(&bytes_top).unwrap();
+    let top_arr = val_top.as_array().expect("transfer/top/50 must return an array");
+    assert_eq!(top_arr.len(), 50);
+    assert!(top_arr[0].get("spid").is_some());
+    assert_eq!(top_arr[0]["expandme"], "player");
+    assert_eq!(top_arr[0]["grade"], 1);
+    assert_eq!(top_arr[0]["count"], 1);
+    assert!(top_arr[0]["price"].as_u64().unwrap() > 0);
+
+    // 2. GET /transfer/top/50/position/FW
+    let req_top_fw = Request::builder()
+        .uri("/transfer/top/50/position/FW")
+        .header(header::HOST, "APSEODESK172")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::empty())
+        .unwrap();
+    let resp_top_fw = app.clone().oneshot(req_top_fw).await.unwrap();
+    assert_eq!(resp_top_fw.status(), StatusCode::OK);
+    let bytes_top_fw = to_bytes(resp_top_fw.into_body(), usize::MAX).await.unwrap();
+    let val_top_fw: Value = serde_json::from_slice(&bytes_top_fw).unwrap();
+    let top_fw_arr = val_top_fw.as_array().unwrap();
+    assert_eq!(top_fw_arr.len(), 50);
+
+    // 3. GET /transfer/search/88207995 (marketable) and 158023 (unmarketable)
+    let req_search = Request::builder()
+        .uri("/transfer/search/88207995")
+        .header(header::HOST, "APSEODESK172")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::empty())
+        .unwrap();
+    let resp_search = app.clone().oneshot(req_search).await.unwrap();
+    assert_eq!(resp_search.status(), StatusCode::OK);
+    let bytes_search = to_bytes(resp_search.into_body(), usize::MAX).await.unwrap();
+    let val_search: Value = serde_json::from_slice(&bytes_search).unwrap();
+    let search_arr = val_search.as_array().unwrap();
+    assert_eq!(search_arr.len(), 3);
+    assert_eq!(search_arr[0]["grade"], 1);
+    assert_eq!(search_arr[1]["grade"], 2);
+    assert_eq!(search_arr[2]["grade"], 3);
+
+    let req_search_unm = Request::builder()
+        .uri("/transfer/search/158023")
+        .header(header::HOST, "APSEODESK172")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::empty())
+        .unwrap();
+    let resp_search_unm = app.clone().oneshot(req_search_unm).await.unwrap();
+    assert_eq!(resp_search_unm.status(), StatusCode::OK);
+    let bytes_unm = to_bytes(resp_search_unm.into_body(), usize::MAX).await.unwrap();
+    let val_unm: Value = serde_json::from_slice(&bytes_unm).unwrap();
+    assert!(val_unm.as_array().unwrap().is_empty());
+
+    // 4. GET /transfer/my/boostfactor
+    let req_boost = Request::builder()
+        .uri("/transfer/my/boostfactor")
+        .header(header::HOST, "APSEODESK172")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::empty())
+        .unwrap();
+    let resp_boost = app.clone().oneshot(req_boost).await.unwrap();
+    assert_eq!(resp_boost.status(), StatusCode::OK);
+    let bytes_boost = to_bytes(resp_boost.into_body(), usize::MAX).await.unwrap();
+    let val_boost: Value = serde_json::from_slice(&bytes_boost).unwrap();
+    assert_eq!(val_boost["igr"], 0.2);
+    assert_eq!(val_boost["vip"], 0.3);
+    assert_eq!(val_boost["event"], 0);
+    assert_eq!(val_boost["item"], 0);
+    assert_eq!(val_boost["discountlimit"], 0);
+
+    // 5. GET /transfer/my/offer/list
+    let req_list = Request::builder()
+        .uri("/transfer/my/offer/list")
+        .header(header::HOST, "APSEODESK172")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::empty())
+        .unwrap();
+    let resp_list = app.clone().oneshot(req_list).await.unwrap();
+    assert_eq!(resp_list.status(), StatusCode::OK);
+    let bytes_list = to_bytes(resp_list.into_body(), usize::MAX).await.unwrap();
+    let val_list: Value = serde_json::from_slice(&bytes_list).unwrap();
+    assert_eq!(val_list["offerexpireoffset"], 86400000);
+    assert_eq!(val_list["boost"]["igr"], 0.2);
+    assert!(val_list["offers"].is_array());
+
+    // 6. Setup coach EP for purchase
+    {
+        let mut st = fo3_server::state::load_state();
+        fo3_server::state::add_ep(&mut st, 50_000_000);
+        let _ = fo3_server::state::save_state(&st);
+    }
+
+    // 7. POST /transfer/purchase/:spid/:grade/:price/purchase
+    let target_spid = 88207995u64;
+    let card_price = fo3_server::state::card_price(target_spid, 1);
+    let req_purchase = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/transfer/purchase/{}/1/{}/purchase", target_spid, card_price))
+        .header(header::HOST, "APSEODESK172")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::empty())
+        .unwrap();
+    let resp_purchase = app.clone().oneshot(req_purchase).await.unwrap();
+    assert_eq!(resp_purchase.status(), StatusCode::OK);
+    let bytes_pur = to_bytes(resp_purchase.into_body(), usize::MAX).await.unwrap();
+    let val_pur: Value = serde_json::from_slice(&bytes_pur).unwrap();
+    assert_eq!(val_pur["result"], true);
+    assert!(val_pur.get("resources").is_some());
+    let pur_res = val_pur["resources"].as_array().unwrap();
+    assert_eq!(pur_res[0]["uri"], "/coach/me");
+
+    // Find the purchased card ID (it's in reserves)
+    let purchased_card_id = {
+        let st = fo3_server::state::load_state();
+        let team = fo3_server::state::my_team(&st);
+        let players = team["players"].as_array().unwrap();
+        let p = players.iter().rev().find(|p| p["spid"] == target_spid).unwrap();
+        fo3_server::state::iid(p)
+    };
+
+    // 8. POST /transfer/offer with starter card -> error
+    let starter_id = {
+        let st = fo3_server::state::load_state();
+        let team = fo3_server::state::my_team(&st);
+        let pos = team["squad"]["positions"].as_array().unwrap();
+        pos[0]["id"].as_str().unwrap().to_string()
+    };
+    let req_offer_starter = Request::builder()
+        .method(Method::POST)
+        .uri("/transfer/offer")
+        .header(header::HOST, "APSEODESK172")
+        .header(header::CONTENT_TYPE, "application/json")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::from(json!({
+            "playerobjectid": starter_id,
+            "price": 10000
+        }).to_string()))
+        .unwrap();
+    let resp_off_starter = app.clone().oneshot(req_offer_starter).await.unwrap();
+    assert_eq!(resp_off_starter.status(), StatusCode::OK);
+    let bytes_off_s = to_bytes(resp_off_starter.into_body(), usize::MAX).await.unwrap();
+    let val_off_s: Value = serde_json::from_slice(&bytes_off_s).unwrap();
+    assert_eq!(val_off_s["result"], false);
+    assert_eq!(val_off_s["reason"], "TRANSFERMARKET_SELECT_SELLABLE_PLAYER");
+
+    // 9. POST /transfer/offer with purchased reserve card
+    let req_offer_ok = Request::builder()
+        .method(Method::POST)
+        .uri("/transfer/offer")
+        .header(header::HOST, "APSEODESK172")
+        .header(header::CONTENT_TYPE, "application/json")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::from(json!({
+            "playerobjectid": purchased_card_id,
+            "price": card_price
+        }).to_string()))
+        .unwrap();
+    let resp_off_ok = app.clone().oneshot(req_offer_ok).await.unwrap();
+    assert_eq!(resp_off_ok.status(), StatusCode::OK);
+    let bytes_off_ok = to_bytes(resp_off_ok.into_body(), usize::MAX).await.unwrap();
+    let val_off_ok: Value = serde_json::from_slice(&bytes_off_ok).unwrap();
+    assert_eq!(val_off_ok["result"], true);
+    let off_resources = val_off_ok["resources"].as_array().unwrap();
+    assert_eq!(off_resources[0]["uri"], "/transfer/my/offer/list");
+    let listed_offers = off_resources[0]["body"]["offers"].as_array().unwrap();
+    let active_offer = listed_offers.iter().find(|o| o["spid"] == target_spid).unwrap();
+    assert_eq!(active_offer["status"], "sold");
+    let offer_id = active_offer["_id"].as_str().unwrap().to_string();
+
+    // 10. DELETE /transfer/my/offer/completed/:offerid
+    let req_collect = Request::builder()
+        .method(Method::DELETE)
+        .uri(format!("/transfer/my/offer/completed/{}", offer_id))
+        .header(header::HOST, "APSEODESK172")
+        .extension(axum::extract::ConnectInfo(addr))
+        .body(Body::empty())
+        .unwrap();
+    let resp_collect = app.clone().oneshot(req_collect).await.unwrap();
+    assert_eq!(resp_collect.status(), StatusCode::OK);
+    let bytes_col = to_bytes(resp_collect.into_body(), usize::MAX).await.unwrap();
+    let val_col: Value = serde_json::from_slice(&bytes_col).unwrap();
+    assert_eq!(val_col["result"], true);
+    assert!(val_col["ep"].as_u64().unwrap() > 0);
+    let col_resources = val_col["resources"].as_array().unwrap();
+    assert_eq!(col_resources[0]["uri"], "/transfer/my/offer/list");
+    assert_eq!(col_resources[1]["uri"], "/coach/me");
+
+    // Verify offer is no longer in offers list
+    let remaining_offers = col_resources[0]["body"]["offers"].as_array().unwrap();
+    assert!(!remaining_offers.iter().any(|o| o["_id"] == offer_id));
 }

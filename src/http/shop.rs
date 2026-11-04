@@ -956,7 +956,7 @@ pub mod tests {
 
     #[test]
     fn test_shop_purchase_flow() {
-        let _lock = state::STATE_MUTEX.lock().unwrap();
+        let _lock = state::STATE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let mut st = state::load_state();
         let coach = state::my_coach_mut(&mut st);
         coach["ep"] = json!(100_000_000);

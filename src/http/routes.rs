@@ -1675,7 +1675,7 @@ pub async fn http_handler(
     }
 
     // 5. Synchronize state operations
-    let _lock = state::STATE_MUTEX.lock().unwrap();
+    let _lock = state::STATE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
 
     // 6. Static responses/<path>.json fallback
     if method == Method::GET && !path.starts_with("/inbox/my/messages") {
