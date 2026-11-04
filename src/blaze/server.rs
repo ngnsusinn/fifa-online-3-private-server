@@ -35,6 +35,18 @@ pub struct Session {
     pub created_at: u64,
 }
 
+fn default_region() -> String {
+    std::env::var("FO3_REGION").unwrap_or_else(|_| {
+        if std::path::Path::new("FO3VN").exists()
+            || std::path::Path::new(r"C:\Users\ngnsusinn\Documents\fifa-online-3-server\FO3VN").exists()
+        {
+            "VN".to_string()
+        } else {
+            "ID".to_string()
+        }
+    })
+}
+
 impl Default for Session {
     fn default() -> Self {
         Self {
@@ -45,7 +57,7 @@ impl Default for Session {
             email: "player@local".to_string(),
             client_version: "20200217".to_string(),
             first_login: 0,
-            region: "ID".to_string(),
+            region: default_region(),
             server_version: 1,
             maintenance: 0,
             created_at: 0,
@@ -104,7 +116,7 @@ impl SessionManager {
             email: email_str,
             client_version: "20200217".to_string(),
             first_login: 0,
-            region: "ID".to_string(),
+            region: default_region(),
             server_version: 1,
             maintenance: 0,
             created_at: now,
@@ -134,7 +146,7 @@ impl SessionManager {
             email: email.unwrap_or_else(|| "player@local".to_string()),
             client_version: "20200217".to_string(),
             first_login: 0,
-            region: "ID".to_string(),
+            region: default_region(),
             server_version: 1,
             maintenance: 0,
             created_at: now,
@@ -786,7 +798,7 @@ pub fn run_test_client(host: &str, port: u16) -> Result<(), Box<dyn std::error::
     assert_eq!(hdr.msgtype_name(), "REPLY");
     assert_eq!(hdr.msgid, 3);
     let conf_struct = find_struct(&f, "CONF").expect("CONF missing");
-    assert_eq!(find_str(conf_struct, "REGN"), Some("ID"));
+    assert_eq!(find_str(conf_struct, "REGN"), Some(default_region().as_str()));
 
     // 4) Authentication loginPersona
     let req4 = enc_string("PNAM", "player");

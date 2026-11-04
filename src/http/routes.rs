@@ -165,12 +165,23 @@ fn handle_exact_or_pattern(
     body: &[u8],
 ) -> Option<Value> {
     match path {
-        "/info/server/config" => Some(json!({
-            "redirector": {"host": "127.0.0.1", "port": 28000},
-            "notification": {"host": "127.0.0.1", "port": 28001},
-            "region": "ID",
-            "status": "ok"
-        })),
+        "/info/server/config" => {
+            let region = std::env::var("FO3_REGION").unwrap_or_else(|_| {
+                if Path::new("FO3VN").exists()
+                    || Path::new(r"C:\Users\ngnsusinn\Documents\fifa-online-3-server\FO3VN").exists()
+                {
+                    "VN".to_string()
+                } else {
+                    "ID".to_string()
+                }
+            });
+            Some(json!({
+                "redirector": {"host": "127.0.0.1", "port": 28000},
+                "notification": {"host": "127.0.0.1", "port": 28001},
+                "region": region,
+                "status": "ok"
+            }))
+        },
         "/info/server/locale" => {
             let lang = std::env::var("FO3_LANGUAGE").unwrap_or_else(|_| {
                 if Path::new("FO3VN").exists()
