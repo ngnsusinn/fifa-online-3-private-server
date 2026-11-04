@@ -497,14 +497,38 @@ fn handle_exact_or_pattern(
                         req.clone()
                     };
 
+                    let known_ids: std::collections::HashSet<String> = team
+                        .get("players")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|p| {
+                                    p.get("id")
+                                        .or_else(|| p.get("_id"))
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string())
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+
                     if let Some(pos_arr) = sq.get("positions").and_then(|v| v.as_array()) {
-                        let starter_count = pos_arr
+                        let valid_positions: Vec<Value> = pos_arr
+                            .iter()
+                            .filter(|p| {
+                                let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                                known_ids.contains(id)
+                            })
+                            .cloned()
+                            .collect();
+
+                        let starter_count = valid_positions
                             .iter()
                             .filter(|p| p.get("pos").and_then(|v| v.as_u64()).unwrap_or(99) < 28)
                             .count();
                         if starter_count >= 11 {
                             if let Some(sq_obj) = team.get_mut("squad").and_then(|v| v.as_object_mut()) {
-                                sq_obj.insert("positions".to_string(), Value::Array(pos_arr.clone()));
+                                sq_obj.insert("positions".to_string(), Value::Array(valid_positions));
                                 if let Some(form) = sq.get("formation") {
                                     sq_obj.insert("formation".to_string(), form.clone());
                                 }

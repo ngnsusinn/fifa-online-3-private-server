@@ -352,12 +352,15 @@ async fn test_http_router_and_fallbacks() {
     assert!(val_shop.is_array());
 
     // 15. Test /coach/me/squad correctly handles PUT with nested squad and returns resources
+    let starter_ids = [
+        88048940u64, 88203747, 88165229, 88192227, 88207993, 88176635, 88199503, 88186561, 88184941, 88178509, 88193301,
+    ];
     let mut test_positions = Vec::new();
-    for i in 0..11 {
+    for (i, &spid) in starter_ids.iter().enumerate() {
         test_positions.push(json!({
-            "id": format!("8804894{}", i),
+            "id": spid.to_string(),
             "pos": i,
-            "spid": 88048940 + i,
+            "spid": spid,
             "starting": [1, 1, 0.5, 0.02]
         }));
     }
