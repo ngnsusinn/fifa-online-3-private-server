@@ -725,7 +725,7 @@ pub async fn admin_handler(
     }
 
     // Synchronize with state lock
-    let _lock = state::STATE_MUTEX.lock().unwrap();
+    let _lock = state::STATE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
 
     let res = match name {
         "summary" => handle_summary(&params),
