@@ -155,6 +155,16 @@ async fn test_admin_page_and_security() {
 #[tokio::test]
 async fn test_http_router_and_fallbacks() {
     let _test_guard = SERIAL_TEST.lock().await;
+    {
+        let mut st = fo3_server::state::load_state();
+        let slot = fo3_server::state::default_slot(&st);
+        if let Some(players) = st.get_mut("teams").and_then(|t| t.get_mut(&slot.to_string())).and_then(|t| t.get_mut("players")).and_then(|p| p.as_array_mut()) {
+            if players.len() > 50 {
+                players.truncate(36);
+                let _ = fo3_server::state::save_state(&st);
+            }
+        }
+    }
     let app = create_http_router();
     let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
 
@@ -1967,6 +1977,16 @@ async fn test_player_leveling_and_expplayer_endpoints() {
 #[tokio::test]
 async fn test_market_endpoints_full_lifecycle() {
     let _test_guard = SERIAL_TEST.lock().await;
+    {
+        let mut st = fo3_server::state::load_state();
+        let slot = fo3_server::state::default_slot(&st);
+        if let Some(players) = st.get_mut("teams").and_then(|t| t.get_mut(&slot.to_string())).and_then(|t| t.get_mut("players")).and_then(|p| p.as_array_mut()) {
+            if players.len() > 50 {
+                players.truncate(36);
+                let _ = fo3_server::state::save_state(&st);
+            }
+        }
+    }
     let app = create_http_router();
     let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
 
