@@ -955,7 +955,7 @@ async fn test_trade_system_and_flow() {
 
     // 8. Prepare state with 2 extra non-squad players for Trade 3
     let (p1_id, p1_spid, p2_id, p2_spid) = {
-        let _lock = fo3_server::state::STATE_MUTEX.lock().unwrap();
+        let _lock = fo3_server::state::STATE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let mut st = fo3_server::state::load_state();
         let slot = fo3_server::state::default_slot(&st);
         let team = st.get_mut("teams").unwrap().get_mut(&slot.to_string()).unwrap();
@@ -1037,7 +1037,7 @@ async fn test_trade_system_and_flow() {
 
     // Verify state: p1 and p2 removed, trade state cleared
     {
-        let _lock = fo3_server::state::STATE_MUTEX.lock().unwrap();
+        let _lock = fo3_server::state::STATE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let st = fo3_server::state::load_state();
         let slot = fo3_server::state::default_slot(&st);
         let team = st["teams"][slot.to_string()].clone();
@@ -1049,7 +1049,7 @@ async fn test_trade_system_and_flow() {
 
     // 11. Test Trade 2 Flow: /players/trade2/proposal & /players/trade2/contract
     let (t2_p1, t2_p2) = {
-        let _lock = fo3_server::state::STATE_MUTEX.lock().unwrap();
+        let _lock = fo3_server::state::STATE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let mut st = fo3_server::state::load_state();
         let slot = fo3_server::state::default_slot(&st);
         let team = st.get_mut("teams").unwrap().get_mut(&slot.to_string()).unwrap();
@@ -1323,7 +1323,7 @@ async fn test_player_enhancement_and_pe2staticvalues() {
     // Setup: add two identical cards to test player enhancement
     let p_spid = 100001u64;
     let (p1_id, p2_id) = {
-        let _lock = fo3_server::state::STATE_MUTEX.lock().unwrap();
+        let _lock = fo3_server::state::STATE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let mut st = fo3_server::state::load_state();
         let team = fo3_server::state::my_team_mut(&mut st);
         let p1 = fo3_server::state::add_player(team, p_spid, 1);
@@ -1395,7 +1395,7 @@ async fn test_player_enhancement_and_pe2staticvalues() {
 
     // Verify p2 (material) was removed and p1 grade became 2
     {
-        let _lock = fo3_server::state::STATE_MUTEX.lock().unwrap();
+        let _lock = fo3_server::state::STATE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let st = fo3_server::state::load_state();
         let team = fo3_server::state::my_team(&st);
         let players = team.get("players").and_then(|v| v.as_array()).unwrap();
@@ -1407,7 +1407,7 @@ async fn test_player_enhancement_and_pe2staticvalues() {
     // 5. Test enhance 2.5: PUT /player/:target/enhance2.5/:material/:use_point/:item_id/:event_id
     // Add another pair for enhance2.5
     let (p3_id, p4_id) = {
-        let _lock = fo3_server::state::STATE_MUTEX.lock().unwrap();
+        let _lock = fo3_server::state::STATE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let mut st = fo3_server::state::load_state();
         let team = fo3_server::state::my_team_mut(&mut st);
         let p3 = fo3_server::state::add_player(team, p_spid, 1);
@@ -1440,7 +1440,7 @@ async fn test_player_enhancement_and_pe2staticvalues() {
     // 6. Test PUT /player/enhance2.5/restore
     // Simulate a failure restore record in state
     {
-        let _lock = fo3_server::state::STATE_MUTEX.lock().unwrap();
+        let _lock = fo3_server::state::STATE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let mut st = fo3_server::state::load_state();
         let team = fo3_server::state::my_team_mut(&mut st);
         if let Some(players) = team.get_mut("players").and_then(|v| v.as_array_mut()) {
@@ -1477,7 +1477,7 @@ async fn test_player_enhancement_and_pe2staticvalues() {
 
     // Verify card grade was restored to 2 and enhance_restore was cleaned up
     {
-        let _lock = fo3_server::state::STATE_MUTEX.lock().unwrap();
+        let _lock = fo3_server::state::STATE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let st = fo3_server::state::load_state();
         let team = fo3_server::state::my_team(&st);
         let players = team.get("players").and_then(|v| v.as_array()).unwrap();
@@ -1513,7 +1513,7 @@ async fn test_inbox_contact_and_bag_endpoints() {
     // 2. GET /inbox/my/messages returns empty array initially
     // Clear any messages first
     {
-        let _lock = fo3_server::state::STATE_MUTEX.lock().unwrap();
+        let _lock = fo3_server::state::STATE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let mut st = fo3_server::state::load_state();
         fo3_server::state::inbox_delete(&mut st, None);
         let _ = fo3_server::state::save_state(&st);
@@ -1533,7 +1533,7 @@ async fn test_inbox_contact_and_bag_endpoints() {
 
     // 3. Add system messages to inbox and verify GET /inbox/my/messages returns them
     let (msg1_id, msg2_id) = {
-        let _lock = fo3_server::state::STATE_MUTEX.lock().unwrap();
+        let _lock = fo3_server::state::STATE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let mut st = fo3_server::state::load_state();
         let m1 = fo3_server::state::inbox_add(&mut st, "Chào mừng", "Chào mừng bạn đến với máy chủ FO3!", "Hệ thống");
         let m2 = fo3_server::state::inbox_add(&mut st, "Bảo trì", "Bảo trì định kỳ kết thúc thành công.", "Hệ thống");
@@ -1647,7 +1647,7 @@ async fn test_inbox_contact_and_bag_endpoints() {
     // 7. Test /bag, /bag/<id>/unpack, and /bag/unpackall
     // Clear bag first and add 2 distinct gifts
     let (gift1_id, gift2_id, initial_ep) = {
-        let _lock = fo3_server::state::STATE_MUTEX.lock().unwrap();
+        let _lock = fo3_server::state::STATE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let mut st = fo3_server::state::load_state();
         let coach = fo3_server::state::my_coach_mut(&mut st);
         coach["bag"] = json!([]);
