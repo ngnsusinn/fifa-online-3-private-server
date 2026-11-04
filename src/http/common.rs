@@ -28,35 +28,19 @@ pub fn no_boost() -> Value {
 pub static NO_BOOST: std::sync::LazyLock<Value> = std::sync::LazyLock::new(no_boost);
 
 pub fn sig3(x: u64) -> u64 {
-    if x < 1000 {
-        return x;
-    }
-    let s = x.to_string();
-    let len = s.len();
-    let factor = 10u64.pow((len - 3) as u32);
-    let float_val = (x as f64) / (factor as f64);
-    (float_val.round() as u64) * factor
+    crate::http::pricing::sig3(x as f64).max(0) as u64
 }
 
 pub fn price_formula(ovr: u32) -> u64 {
-    let exponent = 2.53 + 0.1113 * (ovr as f64);
-    let val = exponent.exp().max(1000.0);
-    sig3(val as u64)
+    crate::http::pricing::price_formula(ovr).max(0) as u64
 }
 
 pub fn card_ovr(spid: u32) -> u32 {
-    let seed = (spid % 1_000_000) % 30;
-    65 + (seed % 25)
+    crate::state::card_ovr(spid as u64)
 }
 
 pub fn card_price(spid: u32, grade: u8) -> u64 {
-    if grade == 0 {
-        return 0;
-    }
-    let g = (grade as usize).min(10);
-    let ovr = card_ovr(spid);
-    let base = price_formula(ovr);
-    sig3((base as f64 * GRADE_PRICE[g]) as u64)
+    crate::state::card_price(spid as u64, grade as usize)
 }
 
 pub fn player_ovr(spid: u32, grade: u8) -> u32 {

@@ -20,11 +20,130 @@ pub const MAX_PLAYERS: usize = 200;
 pub const POS_SUB: u32 = 28;
 pub const WIB: i64 = 7 * 3600;
 pub const EP_ITEM: u64 = 1;
+pub const ES_ITEM: u64 = 2;
+pub const PACK_BUNCHES: &[u64] = &[1, 10];
 
 pub const GRADE_BOOST: [u32; 11] = [0, 5, 6, 7, 8, 10, 12, 14, 17, 20, 24];
 pub const GRADE_PRICE: [f64; 11] = [
     0.0, 1.0, 2.65, 7.1, 19.6, 53.0, 162.0, 420.0, 1090.0, 2680.0, 6290.0,
 ];
+
+pub const PLAYER_MAX_LEVEL: u32 = 23;
+pub const COACH_MAX_LEVEL: u32 = 100;
+pub const EXP_WIN: (u64, u64) = (300, 150);
+pub const EXP_DRAW: (u64, u64) = (200, 100);
+pub const EXP_LOSS: (u64, u64) = (100, 60);
+
+pub fn player_need(level: u32) -> u64 {
+    100 * (level as u64)
+}
+
+pub fn coach_need(level: u32) -> u64 {
+    500 + 100 * (level.max(1) as u64 - 1)
+}
+
+pub fn coach_cumulative_exp(lvl: u32) -> u64 {
+    (1..=lvl).map(coach_need).sum()
+}
+
+pub fn make_levelinfo(info: Option<&Value>, need: impl Fn(u32) -> u64, top: u32) -> Value {
+    let raw_level = info
+        .and_then(|i| i.get("level"))
+        .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+        .unwrap_or(1) as u32;
+    let level = raw_level.clamp(1, top);
+    let exp = if level >= top {
+        0
+    } else {
+        info.and_then(|i| i.get("exp"))
+            .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            .unwrap_or(0)
+    };
+    json!({
+        "level": level,
+        "exp": exp,
+        "to": need(level)
+    })
+}
+
+pub fn player_levelinfo(p: &Value) -> Value {
+    make_levelinfo(p.get("levelinfo"), player_need, PLAYER_MAX_LEVEL)
+}
+
+pub fn coach_levelinfo(coach: &Value) -> Value {
+    make_levelinfo(coach.get("levelinfo"), coach_need, COACH_MAX_LEVEL)
+}
+
+pub fn gain_exp(owner: &mut Value, n: u64, need: impl Fn(u32) -> u64, top: u32) -> (Value, Value) {
+    let prev = make_levelinfo(owner.get("levelinfo"), &need, top);
+    let mut level = prev["level"].as_u64().unwrap_or(1) as u32;
+    let mut exp = prev["exp"].as_u64().unwrap_or(0) + n;
+
+    while level < top && exp >= need(level) {
+        exp -= need(level);
+        level += 1;
+    }
+    if level >= top {
+        exp = 0;
+    }
+
+    let cur = json!({
+        "level": level,
+        "exp": exp,
+        "to": need(level)
+    });
+
+    if let Some(obj) = owner.as_object_mut() {
+        obj.insert("levelinfo".to_string(), cur.clone());
+    }
+
+    (prev, cur)
+}
+
+pub fn gain_player_exp(player: &mut Value, n: u64) -> (Value, Value) {
+    gain_exp(player, n, player_need, PLAYER_MAX_LEVEL)
+}
+
+pub fn gain_coach_exp(coach: &mut Value, n: u64) -> (Value, Value) {
+    gain_exp(coach, n, coach_need, COACH_MAX_LEVEL)
+}
+
+pub fn gain_team_player_exp(team: &mut Value, target_id: &str, n: u64) -> Option<(Value, Value)> {
+    if let Some(players) = team.get_mut("players").and_then(|p| p.as_array_mut()) {
+        for p in players {
+            if iid(p) == target_id {
+                return Some(gain_player_exp(p, n));
+            }
+        }
+    }
+    None
+}
+
+pub fn get_expplayer() -> Value {
+    let mut map = serde_json::Map::new();
+    for lv in 1..=(PLAYER_MAX_LEVEL + 1) {
+        map.insert(
+            lv.to_string(),
+            json!({
+                "requiredplayerexp": player_need(lv)
+            }),
+        );
+    }
+    Value::Object(map)
+}
+
+pub fn get_expcoach() -> Value {
+    let mut map = serde_json::Map::new();
+    for lv in 1..=COACH_MAX_LEVEL {
+        map.insert(
+            lv.to_string(),
+            json!({
+                "totalexp": coach_cumulative_exp(lv)
+            }),
+        );
+    }
+    Value::Object(map)
+}
 
 pub const POS_NAMES: [&str; 28] = [
     "GK", "SW", "RWB", "RB", "RCB", "CB", "LCB", "LB", "LWB", "RDM", "CDM", "LDM", "RM", "RCM",
@@ -73,6 +192,10 @@ pub const PACK_DEFS: &[(u64, &str, u64)] = &[
     (8157, "EC Top 10", 9_000_000),
     (82232124, "EC Top 30 +3", 8_500_000),
     (8135, "Best EC 30 +5", 22_000_000),
+    (8334, "World Best 5", 15_000_000),
+    (8335, "World Legend Top 3", 25_000_000),
+    (8194, "World Legend Top 30", 18_000_000),
+    (82214007, "Top 300", 2_000_000),
 ];
 
 pub fn get_pack_info(itemid: u64) -> Option<(&'static str, u64)> {
@@ -91,8 +214,7 @@ pub fn new_iid() -> String {
 pub fn get_default_team(teamid: u64) -> Value {
     let candidate_paths = [
         format!("responses/static_info_authentic_team_all_{}.json", teamid),
-        format!(r"C:\Users\ngnsusinn\Documents\fifa-online-3-server
-esponses\static_info_authentic_team_all_{}.json", teamid),
+        format!("{}/responses/static_info_authentic_team_all_{}.json", env!("CARGO_MANIFEST_DIR"), teamid),
     ];
     let mut team = json!({});
     for path in &candidate_paths {
@@ -114,7 +236,12 @@ esponses\static_info_authentic_team_all_{}.json", teamid),
             "captain": "",
             "kickers": ["", "", "", "", ""],
             "presetidx": 0,
-            "formations": []
+            "formations": [],
+            "staffs": [],
+            "staffroles": [],
+            "staffroleidx": 0,
+            "maxstaff": 100,
+            "staffsmc": {}
         });
     }
 
@@ -128,10 +255,9 @@ esponses\static_info_authentic_team_all_{}.json", teamid),
             obj.insert("state".to_string(), json!("first"));
             obj.insert("grade".to_string(), json!(0));
             obj.insert("life".to_string(), json!(100));
-            obj.insert("levelinfo".to_string(), json!({"level": 1, "exp": 0, "need": 100}));
-            if !obj.contains_key("price") {
-                obj.insert("price".to_string(), json!(10000));
-            }
+            obj.insert("levelinfo".to_string(), json!({"level": 1, "exp": 0, "to": 100}));
+            let price = card_price(spid, 0);
+            obj.insert("price".to_string(), json!(price));
         }
     }
 
@@ -172,6 +298,14 @@ esponses\static_info_authentic_team_all_{}.json", teamid),
     team["captain"] = json!(cap_str);
     team["kickers"] = Value::Array(kick_arr);
     team["presetidx"] = json!(0);
+    team["staffs"] = json!([]);
+    team["staffroles"] = json!([]);
+    team["staffroleidx"] = json!(0);
+    team["maxstaff"] = json!(100);
+    team["staffsmc"] = json!({});
+    if team.get("formations").is_none() {
+        team["formations"] = json!([]);
+    }
     team
 }
 
@@ -188,6 +322,7 @@ pub fn default_state() -> Value {
                 "teamid": 1,
                 "items": [],
                 "bag": [],
+                "messages": [],
                 "daily": {
                     "last": "",
                     "streak": 0,
@@ -226,6 +361,41 @@ pub fn load_state() -> Value {
                 }
                 v["teams"]["0"] = default_team;
                 let _ = save_state(&v);
+            }
+            if let Some(teams) = v.get_mut("teams").and_then(|t| t.as_object_mut()) {
+                for (_k, team_val) in teams.iter_mut() {
+                    if let Some(players) = team_val.get_mut("players").and_then(|p| p.as_array_mut()) {
+                        for p in players {
+                            let pinfo = player_levelinfo(p);
+                            if let Some(obj) = p.as_object_mut() {
+                                obj.insert("levelinfo".to_string(), pinfo);
+                            }
+                        }
+                    }
+                    if team_val.get("staffs").is_none() {
+                        team_val["staffs"] = json!([]);
+                    }
+                    if team_val.get("staffroles").is_none() {
+                        team_val["staffroles"] = json!([]);
+                    }
+                    if team_val.get("staffroleidx").is_none() {
+                        team_val["staffroleidx"] = json!(0);
+                    }
+                    if team_val.get("maxstaff").is_none() || team_val.get("maxstaff") == Some(&json!(0)) {
+                        team_val["maxstaff"] = json!(100);
+                    }
+                    if team_val.get("staffsmc").is_none() {
+                        team_val["staffsmc"] = json!({});
+                    }
+                }
+            }
+            if let Some(coaches) = v.get_mut("coaches").and_then(|c| c.as_array_mut()) {
+                for c in coaches {
+                    let cinfo = coach_levelinfo(c);
+                    if let Some(obj) = c.as_object_mut() {
+                        obj.insert("levelinfo".to_string(), cinfo);
+                    }
+                }
             }
             return v;
         }
@@ -289,7 +459,14 @@ pub fn my_team_mut(st: &mut Value) -> &mut Value {
                 "positions": [],
                 "kickers": ["", "", "", "", ""],
                 "captain": ""
-            }
+            },
+            "presetidx": 0,
+            "formations": [],
+            "staffs": [],
+            "staffroles": [],
+            "staffroleidx": 0,
+            "maxstaff": 100,
+            "staffsmc": {}
         });
     }
     &mut teams[slot]
@@ -323,21 +500,15 @@ pub fn grade_of(p: &Value) -> usize {
 }
 
 pub fn sig3(x: u64) -> u64 {
-    if x < 1000 {
-        return x;
-    }
-    let s = x.to_string();
-    let p = 10u64.pow((s.len().saturating_sub(3)) as u32);
-    ((x as f64 / p as f64).round() as u64) * p
+    crate::http::pricing::sig3(x as f64).max(0) as u64
 }
 
 pub fn price_formula(ovr: u32) -> u64 {
-    let val = (2.53 + 0.1113 * (ovr as f64)).exp();
-    sig3((val.max(1000.0)) as u64)
+    crate::http::pricing::price_formula(ovr).max(0) as u64
 }
 
 pub fn stat_price(ovr: u32) -> u64 {
-    price_formula(ovr)
+    crate::http::pricing::stat_price(ovr, None).max(0) as u64
 }
 
 pub fn card_ovr(spid: u64) -> u32 {
@@ -357,9 +528,8 @@ pub fn card_ovr(spid: u64) -> u32 {
 }
 
 pub fn card_price(spid: u64, grade: usize) -> u64 {
-    let g = grade.min(10);
-    let base = stat_price(card_ovr(spid)) as f64;
-    sig3((base * GRADE_PRICE[g]) as u64)
+    let ovr = card_ovr(spid);
+    crate::http::pricing::card_price(ovr, grade as u32, None).max(0) as u64
 }
 
 pub fn names(spids: &[u64]) -> HashMap<u64, String> {
@@ -458,16 +628,56 @@ pub fn in_squad(team: &Value, p: &Value) -> bool {
     false
 }
 
+pub fn is_starter(team: &Value, p: &Value) -> bool {
+    let id_str = iid(p);
+    if let Some(positions) = team
+        .get("squad")
+        .and_then(|sq| sq.get("positions"))
+        .and_then(|pos| pos.as_array())
+    {
+        for s in positions {
+            let pid = s
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| s.get("spid").and_then(|v| v.as_u64()).map(|n| n.to_string()))
+                .unwrap_or_default();
+            let pos = s.get("pos").and_then(|v| v.as_u64()).unwrap_or(99);
+            if pid == id_str && pos < POS_SUB as u64 {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 pub fn add_player(team: &mut Value, spid: u64, grade: u32) -> Value {
     let id = new_iid();
-    let player = json!({
+    let first_team_count = team
+        .get("players")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter(|p| !p.get("team2").and_then(|v| v.as_bool()).unwrap_or(false))
+                .count()
+        })
+        .unwrap_or(0);
+    let price = card_price(spid, grade as usize);
+    let mut player = json!({
         "_id": id,
+        "id": id,
         "spid": spid,
         "expandme": "player",
         "grade": grade,
+        "price": price,
         "jersey": 99,
-        "jerseyname": ""
+        "jerseyname": "",
+        "life": 100,
+        "levelinfo": {"level": 1, "exp": 0, "to": 100}
     });
+    if first_team_count >= 36 {
+        player["team2"] = json!(true);
+    }
     if let Some(players) = team.get_mut("players").and_then(|v| v.as_array_mut()) {
         players.push(player.clone());
     }
@@ -511,6 +721,20 @@ pub fn add_ep(st: &mut Value, amount: i64) {
     let coach = my_coach_mut(st);
     let cur = coach.get("ep").and_then(|v| v.as_i64()).unwrap_or(START_EP);
     coach["ep"] = json!(cur + amount);
+}
+
+pub fn add_es<T: Into<i64>>(st: &mut Value, amount: T) {
+    let coach = my_coach_mut(st);
+    let cur = coach.get("es").and_then(|v| v.as_i64()).unwrap_or(0);
+    coach["es"] = json!((cur + amount.into()).max(0));
+}
+
+pub fn inventory_add(st: &mut Value, itemid: u64, count: u64) {
+    give_pack(st, itemid, count);
+}
+
+pub fn get_es(st: &Value) -> i64 {
+    my_coach(st).get("es").and_then(|v| v.as_i64()).unwrap_or(0)
 }
 
 pub fn give_pack(st: &mut Value, itemid: u64, count: u64) {
@@ -561,8 +785,10 @@ pub fn bag_add(
     players: Vec<Value>,
     msg: &str,
 ) -> Value {
+    let iid = new_iid();
     let entry = json!({
-        "_id": new_iid(),
+        "_id": iid,
+        "id": iid,
         "title": title,
         "msg": msg,
         "items": items,
@@ -603,53 +829,7 @@ pub fn lr_ticket_item() -> Value {
 }
 
 pub fn item_def(itemid: u64) -> Value {
-    if itemid == EP_ITEM {
-        return json!({
-            "itemid": EP_ITEM,
-            "productid": EP_ITEM,
-            "name": "EP",
-            "category": "EP",
-            "type": "EP",
-            "unit": "EP",
-            "itemicon": EP_ITEM
-        });
-    }
-    if itemid == LR_TICKET {
-        return json!({
-            "itemid": LR_TICKET,
-            "productid": LR_TICKET,
-            "name": "Tiket locker room",
-            "category": "LOCKERROOM",
-            "type": "LOCKERROOM",
-            "unit": "COUNT",
-            "itemicon": LR_TICKET
-        });
-    }
-    if let Some((name, price)) = get_pack_info(itemid) {
-        return json!({
-            "itemid": itemid,
-            "productid": itemid,
-            "name": name,
-            "category": "PLAYERPACK",
-            "type": "CUSTOM",
-            "unit": "COUNT",
-            "itemicon": itemid,
-            "currency": "ep",
-            "bunches": [
-                {"bunch": 1, "price": price},
-                {"bunch": 10, "price": (price as f64 * 9.5) as u64}
-            ]
-        });
-    }
-    json!({
-        "itemid": itemid,
-        "productid": itemid,
-        "name": format!("Item {}", itemid),
-        "category": "PLAYERPACK",
-        "type": "CUSTOM",
-        "unit": "COUNT",
-        "itemicon": itemid
-    })
+    crate::http::shop::item_def(itemid)
 }
 
 pub fn coach_items(st: &Value, slot: usize, where_key: &str) -> Vec<Value> {
@@ -693,16 +873,25 @@ pub fn bag_list(st: &Value) -> Vec<Value> {
     let coach = my_coach(st);
     if let Some(bag) = coach.get("bag").and_then(|v| v.as_array()) {
         for e in bag {
-            let iid_str = e.get("_id").and_then(|v| v.as_str()).unwrap_or("");
+            let iid_str = e
+                .get("_id")
+                .or_else(|| e.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let title = e.get("title").and_then(|v| v.as_str()).unwrap_or("Quà");
             let msg = e.get("msg").and_then(|v| v.as_str()).unwrap_or("Quà từ server.");
-            let createdat = e.get("createdat").and_then(|v| v.as_i64()).unwrap_or_else(|| Utc::now().timestamp());
+            let createdat = e
+                .get("createdat")
+                .and_then(|v| v.as_i64())
+                .unwrap_or_else(|| Utc::now().timestamp());
             let date = w3c_time(createdat);
             let items = e.get("items").cloned().unwrap_or_else(|| json!([]));
             let players = e.get("players").cloned().unwrap_or_else(|| json!([]));
 
             let mut bundleicon = EP_ITEM;
-            if let Some(items_arr) = items.as_array() {
+            if let Some(icon) = e.get("bundleicon").and_then(|v| v.as_u64()) {
+                bundleicon = icon;
+            } else if let Some(items_arr) = items.as_array() {
                 for it in items_arr {
                     let it_id = it.get("itemid").and_then(|v| v.as_u64()).unwrap_or(0);
                     if it_id != EP_ITEM && it_id != 0 {
@@ -729,7 +918,18 @@ pub fn bag_list(st: &Value) -> Vec<Value> {
 }
 
 pub fn bag_apply(st: &mut Value, slot: usize, entry: &Value) {
-    let entry_id = entry.get("_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let entry_id = entry
+        .get("_id")
+        .or_else(|| entry.get("id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    if let Some(ep) = entry.get("ep").and_then(|v| v.as_i64()) {
+        if ep > 0 {
+            add_ep(st, ep);
+        }
+    }
 
     if let Some(items) = entry.get("items").and_then(|v| v.as_array()) {
         for it in items {
@@ -760,7 +960,77 @@ pub fn bag_apply(st: &mut Value, slot: usize, entry: &Value) {
 
     let coach = my_coach_mut(st);
     if let Some(bag) = coach.get_mut("bag").and_then(|v| v.as_array_mut()) {
-        bag.retain(|e| e.get("_id").and_then(|v| v.as_str()) != Some(&entry_id));
+        bag.retain(|e| {
+            let eid = e.get("_id").or_else(|| e.get("id")).and_then(|v| v.as_str());
+            eid != Some(&entry_id)
+        });
+    }
+}
+
+pub fn inbox_list(st: &Value) -> Vec<Value> {
+    let coach = my_coach(st);
+    if let Some(msgs) = coach.get("messages").and_then(|v| v.as_array()) {
+        msgs.clone()
+    } else {
+        Vec::new()
+    }
+}
+
+pub fn inbox_add(st: &mut Value, title: &str, msg: &str, sender: &str) -> Value {
+    let now = Utc::now().timestamp();
+    let mid = new_iid();
+    let entry = json!({
+        "_id": mid,
+        "id": mid,
+        "title": title,
+        "message": msg,
+        "msg": msg,
+        "sender": sender,
+        "date": w3c_time(now),
+        "senddate": w3c_time(now),
+        "createdat": now,
+        "type": "notice",
+        "isread": false
+    });
+    let coach = my_coach_mut(st);
+    if coach.get("messages").is_none() {
+        coach["messages"] = json!([]);
+    }
+    coach["messages"].as_array_mut().unwrap().push(entry.clone());
+    entry
+}
+
+pub fn inbox_delete(st: &mut Value, msg_id: Option<&str>) {
+    let coach = my_coach_mut(st);
+    if let Some(msgs) = coach.get_mut("messages").and_then(|v| v.as_array_mut()) {
+        if let Some(id) = msg_id {
+            if !id.is_empty() {
+                msgs.retain(|m| {
+                    let mid = m.get("_id").or_else(|| m.get("id")).and_then(|v| v.as_str());
+                    mid != Some(id)
+                });
+                return;
+            }
+        }
+        msgs.clear();
+    }
+}
+
+pub fn inbox_mark_read(st: &mut Value, msg_id: Option<&str>) {
+    let coach = my_coach_mut(st);
+    if let Some(msgs) = coach.get_mut("messages").and_then(|v| v.as_array_mut()) {
+        for m in msgs.iter_mut() {
+            if let Some(id) = msg_id {
+                if !id.is_empty() {
+                    let mid = m.get("_id").or_else(|| m.get("id")).and_then(|v| v.as_str());
+                    if mid == Some(id) {
+                        m["isread"] = json!(true);
+                    }
+                    continue;
+                }
+            }
+            m["isread"] = json!(true);
+        }
     }
 }
 
@@ -874,6 +1144,65 @@ pub fn use_item_or_pack(st: &mut Value, slot: usize, item_id: &str) -> Result<(V
         let count = team.get("players").and_then(|p| p.as_array()).map(|a| a.len()).unwrap_or(0);
         (itemid, count)
     };
+
+    if let Some(it_def) = crate::http::shop::USE_ITEMS.iter().find(|i| i.itemid == itemid) {
+        let mut out = json!({});
+        if it_def.item_type == "EP_LOTTERY" {
+            let ep_gain: i64 = match itemid {
+                50019 => 200_000,
+                50020 => 500_000,
+                50021 => 1_000_000,
+                501 => rand::thread_rng().gen_range(10_000..=1_000_000),
+                50029 => rand::thread_rng().gen_range(100_000..=20_000_000),
+                50028 => rand::thread_rng().gen_range(200_000..=50_000_000),
+                908 => rand::thread_rng().gen_range(1_000_000..=10_000_000),
+                50840 => rand::thread_rng().gen_range(500_000..=5_000_000),
+                50841 => rand::thread_rng().gen_range(5_000_000..=30_000_000),
+                119082304 => rand::thread_rng().gen_range(100_000..=100_000_000),
+                _ => 100_000,
+            };
+            add_ep(st, ep_gain);
+            out["ep"] = json!(ep_gain);
+        } else if it_def.item_type == "ITEM_LOTTERY" {
+            let (prize_ep, prize_item) = match itemid {
+                50121 => (Some(10_000_000), 8334),
+                50122 => (Some(3_000_000), 82214180),
+                50123 => (Some(1_000_000), 8223600),
+                50124 => (Some(300_000), 28006),
+                50125 => (Some(100_000), 82214356),
+                200130000 => (Some(200_000), 28009),
+                200130001 => (Some(1_000_000), 45007),
+                _ => (Some(100_000), 28001),
+            };
+            if rand::thread_rng().gen_bool(0.5) {
+                if let Some(ep_val) = prize_ep {
+                    add_ep(st, ep_val);
+                    out["ep"] = json!(ep_val);
+                }
+            } else {
+                inventory_add(st, prize_item, 1);
+                out["item"] = json!({
+                    "itemid": prize_item,
+                    "count": 1,
+                    "staticdata": item_def(prize_item)
+                });
+            }
+        }
+
+        let coach = my_coach_mut(st);
+        if let Some(items) = coach.get_mut("items").and_then(|v| v.as_array_mut()) {
+            if let Some(it) = items.iter_mut().find(|i| i.get("_id").and_then(|v| v.as_str()) == Some(item_id)) {
+                let r = it.get("remains").and_then(|v| v.as_u64()).unwrap_or(1);
+                if r <= 1 {
+                    items.retain(|i| i.get("_id").and_then(|v| v.as_str()) != Some(item_id));
+                } else {
+                    it["remains"] = json!(r - 1);
+                }
+            }
+        }
+
+        return Ok((Value::Null, Some(out)));
+    }
 
     if cur_players_count >= MAX_PLAYERS {
         return Err("Exceed plyer limit".to_string());
@@ -1025,10 +1354,10 @@ pub fn coach_scouters(st: &Value, _slot: usize) -> Vec<Value> {
     let used = coach.get("scout_used").and_then(|v| v.as_object());
 
     let scouts_def = [
-        ("free", "STR_SCOUTER_KR_FREE_A01", 0.0, None),
-        ("silver", "STR_SCOUTER_KR_SPECIAL_A01", 10800.0, Some(json!({"require_grade": 2}))),
-        ("gold", "STR_SCOUTER_KR_SPECIAL_B01", 21600.0, Some(json!({"require_grade": 3}))),
-        ("event", "STR_SCOUTER_KR_EVENT_A01", 0.0, Some(json!({"require_season": "47,69,77,53,35,23,91,93", "require_season_count": 2}))),
+        ("default_B01", "STR_SCOUTER_KR_DEFAULT_B01", 0.0, Some(json!({"require_value": 100_000}))),
+        ("igr", "STR_SCOUTER_KR_IGR_A01", 0.0, Some(json!({"require_grade": 2, "require_grade_count": 2}))),
+        ("vip", "STR_SCOUTER_KR_VIP_A01", 0.0, Some(json!({"require_season": "88", "require_season_count": 2}))),
+        ("event", "STR_SCOUTER_KR_EVENT_A01", 0.0, Some(json!({"require_season": "93,30,27,71,51,61,89,48,31,33", "require_season_count": 2}))),
         ("vvip", "STR_SCOUTER_KR_VVIP_A01", 0.0, Some(json!({"require_value": 1_000_000_000}))),
     ];
 
@@ -1056,4 +1385,234 @@ pub fn coach_scouters(st: &Value, _slot: usize) -> Vec<Value> {
         out.push(obj);
     }
     out
+}
+
+pub fn match_reward(st: &mut Value, stats: &Value) -> Value {
+    let me = stats.get("myTeam").and_then(|v| v.as_str()).unwrap_or("home");
+    let opp = stats.get("opponentTeam").and_then(|v| v.as_str()).unwrap_or("away");
+
+    let score_me = stats
+        .get(me)
+        .and_then(|t| t.get("score"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let score_opp = stats
+        .get(opp)
+        .and_then(|t| t.get("score"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+
+    let won = score_me > score_opp;
+    let drew = score_me == score_opp;
+
+    let ep = if won { 2000 } else if drew { 1000 } else { 500 };
+    let (cexp, pexp) = if won {
+        EXP_WIN
+    } else if drew {
+        EXP_DRAW
+    } else {
+        EXP_LOSS
+    };
+
+    let reward_fn = |n: u64| {
+        json!({
+            "total": n,
+            "detail": {
+                "base": n,
+                "extra": 0
+            }
+        })
+    };
+
+    let (cprev, ccur) = gain_coach_exp(my_coach_mut(st), cexp);
+
+    let slot = default_slot(st);
+    let mut done = std::collections::HashSet::new();
+    let mut rewarded_players = Vec::new();
+
+    if let Some(teams) = st.get_mut("teams").and_then(|t| t.as_object_mut()) {
+        if let Some(team) = teams.get_mut(&slot.to_string()) {
+            let stats_players = stats
+                .get(me)
+                .and_then(|t| t.get("players"))
+                .and_then(|p| p.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            for s in stats_players {
+                let spid = s.get("spid").and_then(|v| v.as_u64()).unwrap_or(0);
+                let pid = spid % 1_000_000;
+                let goals = s.get("goals").and_then(|v| v.as_u64()).unwrap_or(0);
+                let assists = s.get("assists").and_then(|v| v.as_u64()).unwrap_or(0);
+
+                if let Some(players) = team.get_mut("players").and_then(|p| p.as_array_mut()) {
+                    for p in players.iter_mut() {
+                        let p_spid = p.get("spid").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let p_id = iid(p);
+                        if p_spid % 1_000_000 == pid && !done.contains(&p_id) {
+                            let n = pexp + 20 * goals + 10 * assists;
+                            let (pprev, pcur) = gain_player_exp(p, n);
+                            done.insert(p_id.clone());
+                            rewarded_players.push(json!({
+                                "id": p_id,
+                                "spid": p_spid,
+                                "prev": pprev,
+                                "current": pcur,
+                                "reward": reward_fn(n)
+                            }));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    json!({
+        "matchRewardBackType": 0,
+        "extra": {"selected": {}, "availables": []},
+        "selected": [],
+        "coach": {
+            "reward": reward_fn(cexp),
+            "prev": cprev,
+            "current": ccur
+        },
+        "money": {
+            "reward": reward_fn(ep)
+        },
+        "players": rewarded_players,
+        "missions": [],
+        "exptankinfo": {}
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_player_and_coach_curves() {
+        assert_eq!(player_need(1), 100);
+        assert_eq!(player_need(2), 200);
+        assert_eq!(player_need(23), 2300);
+        assert_eq!(player_need(24), 2400);
+
+        assert_eq!(coach_need(1), 500);
+        assert_eq!(coach_need(2), 600);
+        assert_eq!(coach_need(100), 10400);
+
+        assert_eq!(coach_cumulative_exp(1), 500);
+        assert_eq!(coach_cumulative_exp(2), 1100);
+        assert_eq!(coach_cumulative_exp(3), 1800);
+    }
+
+    #[test]
+    fn test_expplayer_table_generation() {
+        let table = get_expplayer();
+        assert!(table.is_object());
+        let map = table.as_object().unwrap();
+        assert_eq!(map.len(), 24);
+        for lv in 1..=24 {
+            let row = &map[&lv.to_string()];
+            assert_eq!(row["requiredplayerexp"], (100 * lv) as u64);
+        }
+    }
+
+    #[test]
+    fn test_expcoach_table_generation() {
+        let table = get_expcoach();
+        assert!(table.is_object());
+        let map = table.as_object().unwrap();
+        assert_eq!(map.len(), 100);
+        assert_eq!(map["1"]["totalexp"], 500);
+        assert_eq!(map["2"]["totalexp"], 1100);
+        assert_eq!(map["3"]["totalexp"], 1800);
+        assert_eq!(map["100"]["totalexp"], 545000);
+    }
+
+    #[test]
+    fn test_player_levelinfo_structure() {
+        let p1 = json!({});
+        let info1 = player_levelinfo(&p1);
+        assert_eq!(info1["level"], 1);
+        assert_eq!(info1["exp"], 0);
+        assert_eq!(info1["to"], 100);
+
+        let p2 = json!({"levelinfo": {"level": 5, "exp": 120, "need": 500}});
+        let info2 = player_levelinfo(&p2);
+        assert_eq!(info2["level"], 5);
+        assert_eq!(info2["exp"], 120);
+        assert_eq!(info2["to"], 500);
+
+        let p3 = json!({"levelinfo": {"level": 23, "exp": 999}});
+        let info3 = player_levelinfo(&p3);
+        assert_eq!(info3["level"], 23);
+        assert_eq!(info3["exp"], 0);
+        assert_eq!(info3["to"], 2300);
+    }
+
+    #[test]
+    fn test_gain_player_exp_leveling() {
+        let mut player = json!({
+            "spid": 100100,
+            "levelinfo": {"level": 1, "exp": 0, "to": 100}
+        });
+
+        // 1. Partial exp within same level
+        let (p1, c1) = gain_player_exp(&mut player, 50);
+        assert_eq!(p1["level"], 1);
+        assert_eq!(p1["exp"], 0);
+        assert_eq!(c1["level"], 1);
+        assert_eq!(c1["exp"], 50);
+        assert_eq!(c1["to"], 100);
+
+        // 2. Exact level up
+        let (p2, c2) = gain_player_exp(&mut player, 50);
+        assert_eq!(p2["level"], 1);
+        assert_eq!(p2["exp"], 50);
+        assert_eq!(c2["level"], 2);
+        assert_eq!(c2["exp"], 0);
+        assert_eq!(c2["to"], 200);
+
+        // 3. Multi-level jump: lv 2 needs 200, lv 3 needs 300
+        // +250 gives lv 3 with 50 exp
+        let (p3, c3) = gain_player_exp(&mut player, 250);
+        assert_eq!(p3["level"], 2);
+        assert_eq!(p3["exp"], 0);
+        assert_eq!(c3["level"], 3);
+        assert_eq!(c3["exp"], 50);
+        assert_eq!(c3["to"], 300);
+
+        // 4. Level cap at PLAYER_MAX_LEVEL (23)
+        let (_p4, c4) = gain_player_exp(&mut player, 500_000);
+        assert_eq!(c4["level"], 23);
+        assert_eq!(c4["exp"], 0);
+        assert_eq!(c4["to"], 2300);
+
+        // 5. Overflow exp while at max level stays 0 exp, lv 23
+        let (_p5, c5) = gain_player_exp(&mut player, 10_000);
+        assert_eq!(c5["level"], 23);
+        assert_eq!(c5["exp"], 0);
+        assert_eq!(c5["to"], 2300);
+    }
+
+    #[test]
+    fn test_gain_coach_exp_leveling() {
+        let mut coach = json!({
+            "levelinfo": {"level": 1, "exp": 0, "to": 500}
+        });
+
+        let (p1, c1) = gain_coach_exp(&mut coach, 300);
+        assert_eq!(p1["level"], 1);
+        assert_eq!(p1["exp"], 0);
+        assert_eq!(c1["level"], 1);
+        assert_eq!(c1["exp"], 300);
+        assert_eq!(c1["to"], 500);
+
+        // Level up to 2: 300 + 300 = 600 -> lv 2, exp 100, to 600
+        let (_p2, c2) = gain_coach_exp(&mut coach, 300);
+        assert_eq!(c2["level"], 2);
+        assert_eq!(c2["exp"], 100);
+        assert_eq!(c2["to"], 600);
+    }
 }

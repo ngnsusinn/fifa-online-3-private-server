@@ -27,6 +27,7 @@ rustls-pki-types = "1"
 chrono = "0.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ureq = "3.5.1"
 
 [[bin]]
 name = "start_all"

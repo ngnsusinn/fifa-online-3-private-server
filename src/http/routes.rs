@@ -1,3 +1,4 @@
+use crate::http::trade;
 use crate::state;
 use axum::{
     body::Bytes,
@@ -18,7 +19,7 @@ use std::sync::OnceLock;
 
 const CDN_PREFIX: &str = "cdn/";
 
-fn get_assets_dir() -> PathBuf {
+pub fn get_assets_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("FO3_ASSETS") {
         return PathBuf::from(dir);
     }
@@ -43,7 +44,7 @@ fn get_assets_dir() -> PathBuf {
     PathBuf::from("cdn")
 }
 
-fn cdn_file(rel: &str) -> Option<(&'static str, Vec<u8>)> {
+pub fn cdn_file(rel: &str) -> Option<(&'static str, Vec<u8>)> {
     if rel.contains("..") || rel.starts_with('/') || rel.starts_with('\\') {
         return None;
     }
@@ -59,6 +60,11 @@ fn cdn_file(rel: &str) -> Option<(&'static str, Vec<u8>)> {
         if p.is_file() {
             return fs::read(&p).ok().map(|d| ("application/octet-stream", d));
         }
+    }
+
+    // Player miniface fallback resolution
+    if let Some(res) = super::miniface::handle_miniface_request(rel) {
+        return Some(res);
     }
     let base = get_assets_dir();
     let file_path = base.join(rel);
@@ -108,12 +114,18 @@ fn cdn_file(rel: &str) -> Option<(&'static str, Vec<u8>)> {
 
 fn from_responses_file(path: &str) -> Option<Vec<u8>> {
     let sanitized = path.trim_matches('/').replace('/', "_") + ".json";
-    let resp_path = Path::new("responses").join(&sanitized);
-    if resp_path.is_file() {
-        fs::read(&resp_path).ok()
-    } else {
-        None
+    let candidate_paths = [
+        PathBuf::from("responses").join(&sanitized),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("responses").join(&sanitized),
+    ];
+    for p in &candidate_paths {
+        if p.is_file() {
+            if let Ok(data) = fs::read(p) {
+                return Some(data);
+            }
+        }
     }
+    None
 }
 
 fn log_request(method: &Method, path: &str, addr: &SocketAddr, host: &str, body: &[u8]) {
@@ -150,7 +162,8 @@ fn get_patterns() -> &'static Vec<(Regex, &'static str)> {
         vec![
             (Regex::new(r"^/item/(\w+)/use$").unwrap(), "item_use"),
             (Regex::new(r"^/item/depottoitem/(\w+)$").unwrap(), "depot_to_item"),
-            (Regex::new(r"^/bag/(\w+)/unpack$").unwrap(), "bag_unpack"),
+            (Regex::new(r"^/bag/([a-zA-Z0-9_-]+)/unpack/?$").unwrap(), "bag_unpack"),
+            (Regex::new(r"^/inbox/my/messages/([a-zA-Z0-9_-]+)/?$").unwrap(), "inbox_message_id"),
             (
                 Regex::new(r"^/coach/(\w+)/postponed$").unwrap(),
                 "coach_postponed",
@@ -171,6 +184,18 @@ fn get_patterns() -> &'static Vec<(Regex, &'static str)> {
             (
                 Regex::new(r"^/player/(\w+)/enhance/(\w+)/preview$").unwrap(),
                 "enhance_preview",
+            ),
+            (
+                Regex::new(r"^/player/(\w+)/enhance/(\w+)(?:/(-?\w+)/(-?\w+))?$").unwrap(),
+                "enhance",
+            ),
+            (
+                Regex::new(r"^/player/(\w+)/enhance2\.5/(\w+)/preview/(\d)/(-?\d+)/(-?\d+)$").unwrap(),
+                "enhance25_preview",
+            ),
+            (
+                Regex::new(r"^/player/(\w+)/enhance2\.5/(\w+)/(\d)/(-?\d+)/(-?\d+)$").unwrap(),
+                "enhance25",
             ),
             (
                 Regex::new(r"^/league2/sponsor/(\d+)$").unwrap(),
@@ -199,6 +224,42 @@ fn get_patterns() -> &'static Vec<(Regex, &'static str)> {
             (Regex::new(r"^/game/my/team/kickers/(\d+)$").unwrap(), "team_kickers"),
             (Regex::new(r"^/coach/(\d+)/new/step/3$").unwrap(), "coach_new_team"),
             (Regex::new(r"^/coach/(\d+)$").unwrap(), "coach_create"),
+            (
+                Regex::new(r"^/transfer/price/(\d+)/(\d+)$").unwrap(),
+                "transfer_price",
+            ),
+            (
+                Regex::new(r"^/transfer/top/50(?:/position/(\w+))?$").unwrap(),
+                "transfer_top",
+            ),
+            (
+                Regex::new(r"^/transfer/search/(\d+)$").unwrap(),
+                "transfer_search",
+            ),
+            (
+                Regex::new(r"^/transfer/purchase/(\d+)/(\d+)/(\w+)/purchase$").unwrap(),
+                "transfer_purchase",
+            ),
+            (
+                Regex::new(r"^/transfer/my/offer/completed/(\w+)(?:/(\w+))?$").unwrap(),
+                "transfer_collect",
+            ),
+            (
+                Regex::new(r"^/match/([0-9a-f]+)/end$").unwrap(),
+                "match_end",
+            ),
+            (
+                Regex::new(r"^/match/([0-9a-f]+)/(?:player|side/\w+)/ready$").unwrap(),
+                "match_ready",
+            ),
+            (
+                Regex::new(r"^/match/([0-9a-f]+)/gamesettings$").unwrap(),
+                "match_gamesettings",
+            ),
+            (
+                Regex::new(r"^/match/([0-9a-f]+)$").unwrap(),
+                "match_get",
+            ),
         ]
     })
 }
@@ -214,7 +275,7 @@ fn default_tactic(id: usize) -> Value {
     })
 }
 
-fn build_coach_me(st: &mut Value, slot: usize) -> Value {
+pub fn build_coach_me(st: &mut Value, slot: usize) -> Value {
     let coach = if let Some(coaches) = st.get("coaches").and_then(|v| v.as_array()) {
         coaches
             .iter()
@@ -236,6 +297,26 @@ fn build_coach_me(st: &mut Value, slot: usize) -> Value {
 
     if team.get("players").and_then(|p| p.as_array()).map(|a| a.is_empty()).unwrap_or(true) {
         team = state::get_default_team(teamid);
+    }
+
+    if let Some(players) = team.get_mut("players").and_then(|p| p.as_array_mut()) {
+        for p in players {
+            let pinfo = state::player_levelinfo(p);
+            if let Some(obj) = p.as_object_mut() {
+                obj.insert("levelinfo".to_string(), pinfo);
+            }
+        }
+    }
+
+    if let Some(players) = team.get_mut("players").and_then(|v| v.as_array_mut()) {
+        for p in players {
+            if let Some(obj) = p.as_object_mut() {
+                let spid = obj.get("spid").and_then(|v| v.as_u64()).unwrap_or(0);
+                let grade = obj.get("grade").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let price = state::card_price(spid, grade);
+                obj.insert("price".to_string(), json!(price));
+            }
+        }
     }
 
     let cid = coach
@@ -284,6 +365,39 @@ fn build_coach_me(st: &mut Value, slot: usize) -> Value {
     if team.get("formations").is_none() {
         team["formations"] = json!([]);
     }
+    if team.get("staffs").is_none() {
+        team["staffs"] = json!([]);
+    }
+    if team.get("staffroles").is_none() {
+        team["staffroles"] = json!([]);
+    }
+    if team.get("staffroleidx").is_none() {
+        team["staffroleidx"] = json!(0);
+    }
+    if team.get("maxstaff").is_none() || team.get("maxstaff") == Some(&json!(0)) {
+        team["maxstaff"] = json!(100);
+    }
+    if team.get("staffsmc").is_none() {
+        team["staffsmc"] = json!({});
+    }
+
+    if let Some(t) = st.get_mut("teams").and_then(|ts| ts.get_mut(&slot.to_string())) {
+        if t.get("staffs").is_none() {
+            t["staffs"] = json!([]);
+        }
+        if t.get("staffroles").is_none() {
+            t["staffroles"] = json!([]);
+        }
+        if t.get("staffroleidx").is_none() {
+            t["staffroleidx"] = json!(0);
+        }
+        if t.get("maxstaff").is_none() || t.get("maxstaff") == Some(&json!(0)) {
+            t["maxstaff"] = json!(100);
+        }
+        if t.get("staffsmc").is_none() {
+            t["staffsmc"] = json!({});
+        }
+    }
 
     json!({
         "result": true,
@@ -296,7 +410,7 @@ fn build_coach_me(st: &mut Value, slot: usize) -> Value {
         "coach": coach.clone(),
         "money": {
             "ep": ep,
-            "es": 0,
+            "es": coach.get("es").and_then(|v| v.as_i64()).unwrap_or(0),
             "cash": 0,
             "mp": 0,
             "useable_mp": 0,
@@ -310,7 +424,7 @@ fn build_coach_me(st: &mut Value, slot: usize) -> Value {
         "gpdata": {"gp": 0},
         "badges": [],
         "currentbadge": 0,
-        "levelinfo": {"level": 1, "exp": 0, "need": 600},
+        "levelinfo": state::coach_levelinfo(&coach),
         "statistics": {},
         "league": {"leagueid": 13},
         "club": {},
@@ -336,6 +450,24 @@ fn build_coach_me(st: &mut Value, slot: usize) -> Value {
         "formations": team.get("formations").cloned().unwrap_or(json!([])),
         "teamsquadlist": {"preset": [squad_val]}
     })
+}
+
+fn get_effective_method(method: &Method, body: &[u8]) -> String {
+    if *method == Method::GET {
+        return "GET".to_string();
+    }
+    if *method == Method::PUT {
+        return "PUT".to_string();
+    }
+    if *method == Method::DELETE {
+        return "DELETE".to_string();
+    }
+    if let Ok(json) = serde_json::from_slice::<Value>(body) {
+        if let Some(m) = json.get("_method").and_then(|v| v.as_str()) {
+            return m.to_uppercase();
+        }
+    }
+    method.to_string()
 }
 
 fn handle_exact_or_pattern(
@@ -431,12 +563,29 @@ fn handle_exact_or_pattern(
                         "teamgrade": 4.5
                     }));
 
+                let team = st.get("teams")
+                    .and_then(|t| t.get(&slot.to_string()))
+                    .cloned()
+                    .unwrap_or_else(|| state::my_team(&st).clone());
+                let team_val: u64 = team.get("players")
+                    .and_then(|p| p.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .map(|p| {
+                                let spid = p.get("spid").and_then(|v| v.as_u64()).unwrap_or(0);
+                                let grade = p.get("grade").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                                state::card_price(spid, grade)
+                            })
+                            .sum()
+                    })
+                    .unwrap_or(0);
+
                 let mut entry = c.clone();
                 if let Some(obj) = entry.as_object_mut() {
                     obj.insert("state".to_string(), json!("active"));
                     obj.insert("summary".to_string(), summary);
-                    obj.insert("teamvalue".to_string(), json!({"val": 0}));
-                    obj.insert("levelinfo".to_string(), json!({"level": 1, "exp": 0, "need": 600}));
+                    obj.insert("teamvalue".to_string(), json!({"val": team_val}));
+                    obj.insert("levelinfo".to_string(), state::coach_levelinfo(c));
                     obj.insert("recoveryperiod".to_string(), json!(300));
                     obj.insert("slot".to_string(), json!(slot));
                     obj.insert("teamid".to_string(), json!(teamid));
@@ -743,27 +892,61 @@ fn handle_exact_or_pattern(
                 }
             ]
         })),
-        p if p == "/shop/list" || p.starts_with("/shop/list/") => Some(json!([])),
-        "/monthlypack" => {
+        "/shop/list" => {
             let st = state::load_state();
-            if method == Method::POST {
+            Some(json!(crate::http::shop::shop_list(&st)))
+        }
+        "/shop/list/STSHOP" => {
+            Some(json!(crate::http::shop::stshop_list()))
+        }
+        "/shop/list/GPSHOP" => {
+            Some(json!(crate::http::shop::gpshop_list()))
+        }
+        p if p.starts_with("/shop/list/") => {
+            let st = state::load_state();
+            let sub = &p["/shop/list/".len()..];
+            let all = crate::http::shop::shop_list(&st);
+            let filtered: Vec<Value> = all
+                .into_iter()
+                .filter(|e| e.get("shopcategory").and_then(|v| v.as_str()) == Some(sub))
+                .collect();
+            Some(json!(filtered))
+        }
+        "/shop/remained/cash" => {
+            Some(crate::http::shop::shop_remained_cash())
+        }
+        "/shop/purchase" => {
+            if *method == Method::POST {
+                Some(crate::http::shop::handle_shop_purchase(body, |st, slot| {
+                    build_coach_me(st, slot)
+                }))
+            } else {
+                Some(json!({"result": false, "reason": "METHOD_NOT_ALLOWED"}))
+            }
+        }
+        "/specifictarget" => Some(crate::http::shop::specific_target()),
+        "/monthlypack" => {
+            let mut st = state::load_state();
+            let slot = state::default_slot(&st);
+            if *method == Method::POST {
+                crate::http::shop::claim_monthly_rewards(&mut st, slot);
+                let _ = state::save_state(&st);
                 Some(json!({
                     "result": true,
                     "resources": [
-                        {"uri": "/monthlypack", "body": []},
+                        {"uri": "/monthlypack", "body": crate::http::shop::monthlypack_list(&st)},
                         {"uri": "/bag", "body": state::bag_list(&st)}
                     ]
                 }))
             } else {
-                Some(json!([]))
+                Some(json!(crate::http::shop::monthlypack_list(&st)))
             }
         },
-        "/specifictarget" => Some(json!({"issell": true, "targets": []})),
-        "/bag" => {
+        p if p == "/bag" || p == "/bag/" => {
             let st = state::load_state();
             Some(json!(state::bag_list(&st)))
         },
-        "/bag/unpackall" => {
+        p if p == "/bag/unpackall" || p == "/bag/unpackall/" => {
             let mut st = state::load_state();
             let slot = state::default_slot(&st);
             let req: Value = serde_json::from_slice(body).unwrap_or(json!({}));
@@ -772,7 +955,11 @@ fn handle_exact_or_pattern(
                 .and_then(|v| v.as_array())
                 .map(|arr| {
                     arr.iter()
-                        .filter_map(|s| s.as_str().map(|s| s.to_string()))
+                        .filter_map(|s| {
+                            s.as_str()
+                                .map(|s| s.to_string())
+                                .or_else(|| s.as_i64().map(|n| n.to_string()))
+                        })
                         .collect()
                 })
                 .unwrap_or_default();
@@ -784,7 +971,11 @@ fn handle_exact_or_pattern(
                 .unwrap_or_default();
 
             for entry in &bag_entries {
-                let entry_id = entry.get("_id").and_then(|v| v.as_str()).unwrap_or("");
+                let entry_id = entry
+                    .get("_id")
+                    .or_else(|| entry.get("id"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 if req_ids.is_empty() || req_ids.iter().any(|id| id == entry_id) {
                     state::bag_apply(&mut st, slot, entry);
                 }
@@ -799,6 +990,41 @@ fn handle_exact_or_pattern(
                     {"uri": "/bag", "body": state::bag_list(&st)}
                 ]
             }))
+        },
+        p if p == "/contact/list" || p == "/contact/list/" => {
+            if let Some(data) = from_responses_file("/contact/list") {
+                if let Ok(v) = serde_json::from_slice::<Value>(&data) {
+                    return Some(v);
+                }
+            }
+            Some(json!({
+                "friends": [],
+                "requesting": [],
+                "requested": [],
+                "groups": []
+            }))
+        },
+        p if p == "/inbox/my/messages" || p == "/inbox/my/messages/" => {
+            let eff_method = get_effective_method(method, body);
+            if eff_method == "DELETE" {
+                let mut st = state::load_state();
+                state::inbox_delete(&mut st, None);
+                let _ = state::save_state(&st);
+                Some(json!({"result": true}))
+            } else if eff_method == "PUT" {
+                let mut st = state::load_state();
+                state::inbox_mark_read(&mut st, None);
+                let _ = state::save_state(&st);
+                Some(json!({"result": true}))
+            } else if eff_method == "POST" {
+                Some(json!({"result": true}))
+            } else {
+                let st = state::load_state();
+                Some(json!({
+                    "result": true,
+                    "messages": state::inbox_list(&st)
+                }))
+            }
         },
         "/item/depot" => {
             let st = state::load_state();
@@ -848,10 +1074,124 @@ fn handle_exact_or_pattern(
             "teamColors": crate::http::team_color::get_all_team_colors(),
             "teamColorSpecials": {}
         })),
+        "/static/db/EXPPLAYER" => Some(state::get_expplayer()),
+        "/static/db/EXPCOACH" => Some(state::get_expcoach()),
         "/static/db/STATICVALUES/max_coachlevel" => Some(json!(100)),
+        "/static/db/STAFF" => {
+            if let Some(data) = from_responses_file("/static/db/STAFF") {
+                serde_json::from_slice(&data).ok()
+            } else {
+                Some(json!({
+                    "config": {"max_staff_open_count": 3},
+                    "slots": {"1": []}
+                }))
+            }
+        },
+        "/staff/status/expand" => Some(json!({
+            "result": true,
+            "expandable": false,
+            "nextmaxcount": 100,
+            "nextfee": 0
+        })),
+        "/staff/recruit" => Some(json!([])),
         "/account/trade2/usage" => Some(json!({"result": true, "usedcount": 0, "maxcount": 0, "remainsec": 0})),
         "/trade3/notification" => Some(json!({"result": true})),
         "/players/trade/proposal/resend" => Some(json!({"result": false, "reason": "NOT_SUPPORTED_REQUEST"})),
+        "/trade3/staticvalues" => Some(trade::trade3_static()),
+        "/trade3/info" => {
+            let mut st = state::load_state();
+            let slot = state::default_slot(&st);
+            let coach_me_val = build_coach_me(&mut st, slot);
+            Some(json!({
+                "result": true,
+                "resources": [
+                    {"uri": "/coach/me", "body": coach_me_val}
+                ]
+            }))
+        },
+        "/trade3/proposal" => {
+            let mut st = state::load_state();
+            let slot = state::default_slot(&st);
+            Some(trade::handle_trade3_proposal(body, &mut st, slot))
+        },
+        "/trade3/contract" | "/players/trade2/contract" | "/players/trade/contract" => {
+            let mut st = state::load_state();
+            let slot = state::default_slot(&st);
+            Some(trade::handle_trade_contract(body, &mut st, slot))
+        },
+        "/players/trade2/info" => Some(trade::trade2_info()),
+        "/players/trade2/proposal" => {
+            let mut st = state::load_state();
+            let slot = state::default_slot(&st);
+            Some(trade::handle_trade2_proposal(body, &mut st, slot))
+        },
+        "/players/trade/proposal" => {
+            let mut st = state::load_state();
+            let slot = state::default_slot(&st);
+            Some(trade::handle_trade1_proposal(body, &mut st, slot))
+        },
+        "/static/db/TRADE" => Some(trade::trade2_table()),
+        "/static/cache/TRADE_SPECIALPLAYERS" => Some(trade::trade2_special_players()),
+        "/static/db/PLAYERTRADE" => Some(trade::playertrade_table()),
+        "/static/db/PE2STATICVALUES" => Some(crate::http::upgrade::pe2_staticvalues()),
+        "/player/enhance2.5/restore" => {
+            if method == Method::PUT || method == Method::POST {
+                let mut st = state::load_state();
+                let slot = state::default_slot(&st);
+                let coach_me = build_coach_me(&mut st, slot);
+                let mut resp = crate::http::upgrade::handle_enhance25_restore(&mut st, slot, coach_me);
+                if resp.get("result").and_then(|v| v.as_bool()) == Some(true) {
+                    let _ = state::save_state(&st);
+                    let fresh_coach_me = build_coach_me(&mut st, slot);
+                    resp["resources"] = json!([
+                        {
+                            "uri": "/coach/me",
+                            "body": fresh_coach_me
+                        }
+                    ]);
+                }
+                Some(resp)
+            } else {
+                Some(json!({"result": false, "reason": "METHOD_NOT_ALLOWED"}))
+            }
+        },
+        "/transfer/top/50" => {
+            Some(crate::http::market::ep_transfer_top(None))
+        },
+        "/transfer/my/offer/list" => {
+            let st = state::load_state();
+            Some(crate::http::market::offer_list(&st))
+        },
+        "/transfer/my/boostfactor" => {
+            Some(crate::http::market::ep_my_boostfactor())
+        },
+        "/transfer/offer" => {
+            let mut st = state::load_state();
+            let slot = state::default_slot(&st);
+            let req: Value = serde_json::from_slice(body).unwrap_or(json!({}));
+            let pid = req.get("playerobjectid").and_then(|v| v.as_str()).unwrap_or("");
+            let price = req.get("price").and_then(|v| v.as_u64()).unwrap_or(0);
+            match crate::http::market::create_offer(&mut st, pid, price) {
+                Ok(()) => {
+                    let _ = state::save_state(&st);
+                    let coach_me_val = build_coach_me(&mut st, slot);
+                    Some(json!({
+                        "result": true,
+                        "resources": [
+                            {
+                                "uri": "/transfer/my/offer/list",
+                                "body": crate::http::market::offer_list(&st)
+                            },
+                            {
+                                "uri": "/coach/me",
+                                "body": coach_me_val
+                            }
+                        ]
+                    }))
+                }
+                Err(reason) => Some(json!({"result": false, "reason": reason})),
+            }
+        }
         _ => {
             // Check regex pattern routes
             for (re, name) in get_patterns() {
@@ -888,7 +1228,10 @@ fn handle_exact_or_pattern(
                                 .and_then(|b| b.as_array())
                                 .and_then(|arr| {
                                     arr.iter()
-                                        .find(|e| e.get("_id").and_then(|v| v.as_str()) == Some(bid))
+                                        .find(|e| {
+                                            let eid = e.get("_id").or_else(|| e.get("id")).and_then(|v| v.as_str());
+                                            eid == Some(bid)
+                                        })
                                         .cloned()
                                 });
 
@@ -906,6 +1249,34 @@ fn handle_exact_or_pattern(
                                 }))
                             } else {
                                 Some(json!({"result": false, "reason": "ITEM_USE_ERROR"}))
+                            }
+                        }
+                        "inbox_message_id" => {
+                            let mid = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                            let eff_method = get_effective_method(method, body);
+                            if eff_method == "DELETE" {
+                                let mut st = state::load_state();
+                                state::inbox_delete(&mut st, Some(mid));
+                                let _ = state::save_state(&st);
+                                Some(json!({"result": true}))
+                            } else if eff_method == "PUT" {
+                                let mut st = state::load_state();
+                                state::inbox_mark_read(&mut st, Some(mid));
+                                let _ = state::save_state(&st);
+                                Some(json!({"result": true}))
+                            } else {
+                                let st = state::load_state();
+                                let msg = state::inbox_list(&st)
+                                    .into_iter()
+                                    .find(|m| {
+                                        let id = m.get("_id").or_else(|| m.get("id")).and_then(|v| v.as_str());
+                                        id == Some(mid)
+                                    });
+                                if let Some(m) = msg {
+                                    Some(json!({"result": true, "message": m}))
+                                } else {
+                                    Some(json!({"result": false, "reason": "MESSAGE_NOT_FOUND"}))
+                                }
                             }
                         }
                         "depot_to_item" => {
@@ -933,8 +1304,77 @@ fn handle_exact_or_pattern(
                             let id = caps.get(1).map(|m| m.as_str()).unwrap_or("1");
                             Some(json!({"id": id.parse::<u64>().unwrap_or(1), "result": true}))
                         }
-                        "player_move" => Some(json!({"result": true})),
-                        "enhance_preview" => Some(json!({"result": true, "rate": 100})),
+                        "player_move" => {
+                            let pid = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                            let where_to = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+                            let mut st = state::load_state();
+                            let slot = state::default_slot(&st);
+                            Some(trade::handle_player_move(pid, where_to, &mut st, slot))
+                        },
+                        "enhance_preview" => {
+                            let target_id = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                            let material_id = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+                            let st = state::load_state();
+                            Some(crate::http::upgrade::handle_enhance_preview(&st, target_id, material_id))
+                        }
+                        "enhance" => {
+                            if method == Method::PUT || method == Method::POST {
+                                let target_id = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                                let material_id = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+                                let mut st = state::load_state();
+                                let slot = state::default_slot(&st);
+                                let coach_me = build_coach_me(&mut st, slot);
+                                let mut resp = crate::http::upgrade::handle_enhance(&mut st, slot, target_id, material_id, coach_me);
+                                if resp.get("result").and_then(|v| v.as_bool()) == Some(true) {
+                                    let _ = state::save_state(&st);
+                                    let fresh_coach_me = build_coach_me(&mut st, slot);
+                                    resp["resources"] = json!([
+                                        {
+                                            "uri": "/coach/me",
+                                            "body": fresh_coach_me
+                                        }
+                                    ]);
+                                }
+                                Some(resp)
+                            } else {
+                                Some(json!({"result": false, "reason": "METHOD_NOT_ALLOWED"}))
+                            }
+                        }
+                        "enhance25_preview" => {
+                            let target_id = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                            let material_id = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+                            let use_point = caps.get(3).map(|m| m.as_str()).unwrap_or("0");
+                            let item_id = caps.get(4).map(|m| m.as_str()).unwrap_or("-1");
+                            let event_id = caps.get(5).map(|m| m.as_str()).unwrap_or("-1");
+                            let st = state::load_state();
+                            Some(crate::http::upgrade::handle_enhance25_preview(&st, target_id, material_id, use_point, item_id, event_id))
+                        }
+                        "enhance25" => {
+                            if method == Method::PUT || method == Method::POST {
+                                let target_id = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                                let material_id = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+                                let use_point = caps.get(3).map(|m| m.as_str()).unwrap_or("0");
+                                let item_id = caps.get(4).map(|m| m.as_str()).unwrap_or("-1");
+                                let event_id = caps.get(5).map(|m| m.as_str()).unwrap_or("-1");
+                                let mut st = state::load_state();
+                                let slot = state::default_slot(&st);
+                                let coach_me = build_coach_me(&mut st, slot);
+                                let mut resp = crate::http::upgrade::handle_enhance25(&mut st, slot, target_id, material_id, use_point, item_id, event_id, coach_me);
+                                if resp.get("result").and_then(|v| v.as_bool()) == Some(true) {
+                                    let _ = state::save_state(&st);
+                                    let fresh_coach_me = build_coach_me(&mut st, slot);
+                                    resp["resources"] = json!([
+                                        {
+                                            "uri": "/coach/me",
+                                            "body": fresh_coach_me
+                                        }
+                                    ]);
+                                }
+                                Some(resp)
+                            } else {
+                                Some(json!({"result": false, "reason": "METHOD_NOT_ALLOWED"}))
+                            }
+                        }
                         "league2_sponsor" => Some(json!({"result": true})),
                         "cup_match" | "cup_next" | "cup_resume" | "cup_leave" => {
                             Some(json!({"result": true}))
@@ -1053,9 +1493,125 @@ fn handle_exact_or_pattern(
                             if st.get("teams").is_none() {
                                 st["teams"] = json!({});
                             }
+                            team["staffs"] = json!([]);
+                            team["staffroles"] = json!([]);
+                            team["staffroleidx"] = json!(0);
+                            team["maxstaff"] = json!(100);
+                            team["staffsmc"] = json!({});
                             st["teams"][slot.to_string()] = team.clone();
                             let _ = state::save_state(&st);
                             Some(json!({"result": true, "team": team}))
+                        }
+                        "transfer_price" => {
+                            let spid = caps.get(1).and_then(|m| m.as_str().parse::<u64>().ok()).unwrap_or(0);
+                            let grade = caps.get(2).and_then(|m| m.as_str().parse::<usize>().ok()).unwrap_or(1);
+                            let p = state::card_price(spid, grade);
+                            Some(json!({
+                                "lower": p * 8 / 10,
+                                "upper": p,
+                                "default": p,
+                                "lowest": p,
+                                "registrationFee": 0
+                            }))
+                        }
+                        "transfer_top" => {
+                            let pos_filter = caps.get(1).map(|m| m.as_str().to_uppercase());
+                            Some(crate::http::market::ep_transfer_top(pos_filter.as_deref()))
+                        }
+                        "transfer_search" => {
+                            let spid = caps.get(1).and_then(|m| m.as_str().parse::<u64>().ok()).unwrap_or(0);
+                            Some(crate::http::market::ep_transfer_search(spid))
+                        }
+                        "transfer_purchase" => {
+                            let spid = caps.get(1).and_then(|m| m.as_str().parse::<u64>().ok()).unwrap_or(0);
+                            let grade = caps.get(2).and_then(|m| m.as_str().parse::<usize>().ok()).unwrap_or(1);
+                            let mut st = state::load_state();
+                            let slot = state::default_slot(&st);
+                            match crate::http::market::purchase(&mut st, spid, grade) {
+                                Ok(()) => {
+                                    let _ = state::save_state(&st);
+                                    let coach_me_val = build_coach_me(&mut st, slot);
+                                    Some(json!({
+                                        "result": true,
+                                        "resources": [
+                                            {"uri": "/coach/me", "body": coach_me_val}
+                                        ]
+                                    }))
+                                }
+                                Err(reason) => Some(json!({
+                                    "result": false,
+                                    "reason": reason
+                                })),
+                            }
+                        }
+                        "transfer_collect" => {
+                            let offer_id = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                            let mut st = state::load_state();
+                            let slot = state::default_slot(&st);
+                            match crate::http::market::collect_offer(&mut st, offer_id) {
+                                Ok(ep) => {
+                                    let _ = state::save_state(&st);
+                                    let coach_me_val = build_coach_me(&mut st, slot);
+                                    Some(json!({
+                                        "result": true,
+                                        "ep": ep,
+                                        "resources": [
+                                            {
+                                                "uri": "/transfer/my/offer/list",
+                                                "body": crate::http::market::offer_list(&st)
+                                            },
+                                            {
+                                                "uri": "/coach/me",
+                                                "body": coach_me_val
+                                            }
+                                        ]
+                                    }))
+                                }
+                                Err(reason) => Some(json!({
+                                    "result": false,
+                                    "reason": reason
+                                })),
+                            }
+                        }
+                        "match_end" => {
+                            let mid = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                            let req: Value = serde_json::from_slice(body).unwrap_or(json!({}));
+                            let mut st = state::load_state();
+                            let reward = state::match_reward(&mut st, &req);
+                            let ep_gain = reward["money"]["reward"]["total"].as_i64().unwrap_or(0);
+                            state::add_ep(&mut st, ep_gain);
+                            let match_obj = json!({
+                                "id": mid,
+                                "result": req,
+                                "reward": reward,
+                                "stage": "closed"
+                            });
+                            st["match"] = match_obj.clone();
+                            let _ = state::save_state(&st);
+                            Some(json!({
+                                "result": true,
+                                "match": match_obj
+                            }))
+                        }
+                        "match_ready" => Some(json!({"result": true})),
+                        "match_gamesettings" => {
+                            let mid = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                            let st = state::load_state();
+                            let m = st.get("match").cloned().unwrap_or(json!({}));
+                            Some(json!({
+                                "result": true,
+                                "resources": [{"uri": format!("/match/{}", mid), "body": m}]
+                            }))
+                        }
+                        "match_get" => {
+                            let mid = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                            let st = state::load_state();
+                            let m = st.get("match");
+                            if m.and_then(|v| v.get("id")).and_then(|v| v.as_str()) == Some(mid) {
+                                Some(m.cloned().unwrap_or(json!({})))
+                            } else {
+                                Some(json!({}))
+                            }
                         }
                         _ => None,
                     };
@@ -1122,13 +1678,15 @@ pub async fn http_handler(
     let _lock = state::STATE_MUTEX.lock().unwrap();
 
     // 6. Static responses/<path>.json fallback
-    if let Some(file_data) = from_responses_file(path) {
-        return (
-            StatusCode::OK,
-            [(header::CONTENT_TYPE, "application/json")],
-            file_data,
-        )
-            .into_response();
+    if method == Method::GET && !path.starts_with("/inbox/my/messages") {
+        if let Some(file_data) = from_responses_file(path) {
+            return (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "application/json")],
+                file_data,
+            )
+                .into_response();
+        }
     }
 
     // 7. Exact endpoints or pattern routes
@@ -1159,5 +1717,7 @@ pub async fn http_handler(
 }
 
 pub fn create_http_router() -> Router {
-    Router::new().fallback(http_handler)
+    Router::new()
+        .merge(crate::http::upgrade::router())
+        .fallback(http_handler)
 }

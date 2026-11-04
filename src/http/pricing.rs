@@ -69,6 +69,13 @@ pub fn card_price(card_ovr: u32, grade: u32, fa_table: Option<&HashMap<u32, f64>
     sig3(base as f64 * mult)
 }
 
+/// Convenience function to calculate card price directly from SPID and grade.
+/// Uses `fifadb.sqlite` (or fallback 75) for the card's rating.
+pub fn card_price_spid(spid: u64, grade: u32) -> i64 {
+    let ovr = crate::state::card_ovr(spid);
+    card_price(ovr, grade, None)
+}
+
 /// Computes median of a slice of values
 fn median(v: &mut [f64]) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -154,5 +161,18 @@ mod tests {
         assert_eq!(card_price(65, 1, None), 17000);
         assert!(card_price(65, 2, None) > 17000);
         assert!(card_price(65, 5, None) > card_price(65, 2, None));
+        assert_eq!(card_price(83, 1, None), 130000);
+        assert_eq!(card_price(83, 10, None), 820000000);
+    }
+
+    #[test]
+    fn test_card_price_spid() {
+        assert_eq!(card_price_spid(88184941, 0), 0);
+        let p1 = card_price_spid(88184941, 1);
+        assert!(p1 > 0);
+        let p2 = card_price_spid(88184941, 2);
+        assert!(p2 > p1);
+        let p10 = card_price_spid(88184941, 10);
+        assert!(p10 > p2);
     }
 }

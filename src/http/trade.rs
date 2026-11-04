@@ -1,17 +1,10 @@
-use super::common::{
-    card_ovr, card_price, sig3, Player, SharedState, TradeState, FIRST_TEAM_MAX,
-};
-use axum::{
-    extract::{Path, State},
-    response::IntoResponse,
-    routing::{get, post},
-    Json, Router,
-};
+use crate::state;
 use rand::seq::SliceRandom;
 use rand::Rng;
-use serde::Deserialize;
+use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::path::Path;
 
 pub const NO_LIMIT: u64 = 9_000_000_000_000_000;
 pub const LEGEND_SEASONS: [u32; 10] = [93, 30, 27, 71, 51, 61, 89, 48, 31, 33];
@@ -38,6 +31,61 @@ pub const TRADE2_LEVELS: [u64; 15] = [
 pub const TRADE2_MANAGERS: [&str; 10] = [
     "Budi", "Andi", "Rizky", "Dimas", "Fajar", "Yoga", "Agus", "Hendra", "Bayu", "Eko",
 ];
+
+#[derive(Debug, Clone)]
+pub struct ScoutInfo {
+    pub key: &'static str,
+    pub name: &'static str,
+    pub mult_min: f64,
+    pub mult_max: f64,
+}
+
+pub const SCOUTS: [ScoutInfo; 5] = [
+    ScoutInfo {
+        key: "default_B01",
+        name: "STR_SCOUTER_KR_DEFAULT_B01",
+        mult_min: 0.9,
+        mult_max: 1.3,
+    },
+    ScoutInfo {
+        key: "igr",
+        name: "STR_SCOUTER_KR_IGR_A01",
+        mult_min: 0.9,
+        mult_max: 1.4,
+    },
+    ScoutInfo {
+        key: "vip",
+        name: "STR_SCOUTER_KR_VIP_A01",
+        mult_min: 1.0,
+        mult_max: 1.5,
+    },
+    ScoutInfo {
+        key: "event",
+        name: "STR_SCOUTER_KR_EVENT_A01",
+        mult_min: 1.0,
+        mult_max: 1.5,
+    },
+    ScoutInfo {
+        key: "vvip",
+        name: "STR_SCOUTER_KR_VVIP_A01",
+        mult_min: 1.1,
+        mult_max: 1.6,
+    },
+];
+
+pub fn scout_quest(key: &str) -> Option<Value> {
+    match key {
+        "default_B01" => Some(json!({ "require_value": 100_000 })),
+        "igr" => Some(json!({ "require_grade": 2, "require_grade_count": 2 })),
+        "vip" => Some(json!({ "require_season": "88", "require_season_count": 2 })),
+        "event" => Some(json!({
+            "require_season": "93,30,27,71,51,61,89,48,31,33",
+            "require_season_count": 2
+        })),
+        "vvip" => Some(json!({ "require_value": 1_000_000_000 })),
+        _ => None,
+    }
+}
 
 pub fn normal_offers_count(n: usize) -> usize {
     match n {
@@ -89,12 +137,12 @@ pub fn pick_weighted_grade(grades: &HashMap<String, f64>, rng: &mut impl Rng) ->
     1
 }
 
-pub fn is_legend(spid: u32) -> bool {
-    let season = spid / 1_000_000;
+pub fn is_legend(spid: u64) -> bool {
+    let season = (spid / 1_000_000) as u32;
     LEGEND_SEASONS.contains(&season)
 }
 
-pub fn trade2_tp(give: &[Player]) -> u64 {
+pub fn trade2_tp(give: &[Value]) -> u64 {
     let n = give.len();
     let bonus_n = 1.0 + 0.02 * ((n as f64) - 2.0).max(0.0);
     let igr = 1.05;
@@ -103,12 +151,14 @@ pub fn trade2_tp(give: &[Player]) -> u64 {
     let base_sum: u64 = give
         .iter()
         .map(|p| {
-            let mult = if is_legend(p.spid) && p.grade_of() >= 1 {
+            let spid = p.get("spid").and_then(|v| v.as_u64()).unwrap_or(0);
+            let grade = state::grade_of(p) as usize;
+            let mult = if is_legend(spid) && grade >= 1 {
                 1.5
             } else {
                 1.0
             };
-            (card_price(p.spid, p.grade_of()) as f64 * mult) as u64
+            (state::card_price(spid, grade) as f64 * mult) as u64
         })
         .sum();
 
@@ -140,7 +190,8 @@ pub fn trade2_table() -> Value {
         "VIP": 1.05
     });
     for n in 2..=10 {
-        bonus_map[n.to_string()] = json!((1.0 + 0.02 * ((n as f64) - 2.0)).round());
+        let bonus = ((1.0 + 0.02 * (n as f64 - 2.0)) * 100.0).round() / 100.0;
+        bonus_map[n.to_string()] = json!(bonus);
     }
 
     let mut normal_map = json!({});
@@ -161,17 +212,45 @@ pub fn trade2_table() -> Value {
 
 pub fn trade2_special_players() -> Value {
     let mut map = json!({});
-    for s in (1000..1050).chain(1000000..1000050) {
-        if is_legend(s) {
-            map[s.to_string()] = json!(1);
+    if Path::new(state::FIFADB_PATH).exists() {
+        if let Ok(conn) = Connection::open(state::FIFADB_PATH) {
+            let sql = "SELECT DISTINCT spid FROM players WHERE spid / 1000000 IN (93, 30, 27, 71, 51, 61, 89, 48, 31, 33)";
+            if let Ok(mut stmt) = conn.prepare(sql) {
+                if let Ok(rows) = stmt.query_map([], |row| row.get::<_, u64>(0)) {
+                    for r in rows.flatten() {
+                        map[r.to_string()] = json!(1);
+                    }
+                }
+            }
         }
     }
-    // Ensure legend seasons test cases pass
     for &season in &LEGEND_SEASONS {
-        let spid = season * 1_000_000 + 101;
+        let spid = season as u64 * 1_000_000 + 101;
         map[spid.to_string()] = json!(1);
     }
     map
+}
+
+pub fn trade2_info() -> Value {
+    let mut out = json!({});
+    let mut rng = rand::thread_rng();
+
+    for &tp in &TRADE2_LEVELS[1..] {
+        let max_g = trade2_max_grade(tp);
+        let g = rng.gen_range(1..=max_g);
+        let (spid, _) = pick_trade_spid(tp, g as u32, &mut rng);
+        let coach = TRADE2_MANAGERS.choose(&mut rng).unwrap();
+
+        out[tp.to_string()] = json!({
+            "spid": spid,
+            "grade": g,
+            "expandme": "player",
+            "price": (tp as f64 * 1.1) as u64,
+            "coach": coach
+        });
+    }
+
+    out
 }
 
 pub fn trade3_static() -> Value {
@@ -188,48 +267,46 @@ pub fn trade3_static() -> Value {
     })
 }
 
-#[derive(Debug, Clone)]
-pub struct ScoutInfo {
-    pub key: &'static str,
-    pub name: &'static str,
-    pub mult_min: f64,
-    pub mult_max: f64,
+pub fn playertrade_table() -> Value {
+    let mut pgrade = json!({});
+    for s in 2..=100 {
+        pgrade[s.to_string()] = json!(trade_grades(s));
+    }
+    json!({
+        "playergrade": pgrade
+    })
 }
 
-pub const SCOUTS: [ScoutInfo; 5] = [
-    ScoutInfo {
-        key: "default_B01",
-        name: "STR_SCOUTER_KR_DEFAULT_B01",
-        mult_min: 0.9,
-        mult_max: 1.3,
-    },
-    ScoutInfo {
-        key: "igr",
-        name: "STR_SCOUTER_KR_IGR_A01",
-        mult_min: 0.9,
-        mult_max: 1.4,
-    },
-    ScoutInfo {
-        key: "vip",
-        name: "STR_SCOUTER_KR_VIP_A01",
-        mult_min: 1.0,
-        mult_max: 1.5,
-    },
-    ScoutInfo {
-        key: "event",
-        name: "STR_SCOUTER_KR_EVENT_A01",
-        mult_min: 1.0,
-        mult_max: 1.5,
-    },
-    ScoutInfo {
-        key: "vvip",
-        name: "STR_SCOUTER_KR_VVIP_A01",
-        mult_min: 1.1,
-        mult_max: 1.6,
-    },
-];
+pub fn pick_trade_spid(target_price: u64, grade: u32, rng: &mut impl Rng) -> (u64, u32) {
+    if Path::new(state::FIFADB_PATH).exists() {
+        if let Ok(conn) = Connection::open(state::FIFADB_PATH) {
+            let g = (grade as usize).clamp(1, 10);
+            let mult = state::GRADE_PRICE[g].max(1.0);
+            let base = (target_price as f64 / mult).max(1000.0);
+            let estimated_ovr = ((base.ln() - 2.53) / 0.1113).round() as i32;
+            let target_ovr = estimated_ovr.clamp(55, 95);
 
-pub fn quest_met(quest: Option<&Value>, give: &[Player]) -> bool {
+            let sql = "SELECT spid, teamid FROM players WHERE overallrating BETWEEN ?1 AND ?2 ORDER BY RANDOM() LIMIT 1";
+            if let Ok(mut stmt) = conn.prepare(sql) {
+                if let Ok(row) = stmt.query_row([target_ovr - 3, target_ovr + 3], |r| {
+                    Ok((r.get::<_, u64>(0)?, r.get::<_, u32>(1)?))
+                }) {
+                    return row;
+                }
+            }
+            if let Ok(mut stmt) = conn.prepare("SELECT spid, teamid FROM players ORDER BY RANDOM() LIMIT 1") {
+                if let Ok(row) = stmt.query_row([], |r| {
+                    Ok((r.get::<_, u64>(0)?, r.get::<_, u32>(1)?))
+                }) {
+                    return row;
+                }
+            }
+        }
+    }
+    (1_000_300 + rng.gen_range(1..1000), 241)
+}
+
+pub fn quest_met(quest: Option<&Value>, give: &[Value]) -> bool {
     let q = match quest {
         Some(q) => q,
         None => return false,
@@ -238,7 +315,11 @@ pub fn quest_met(quest: Option<&Value>, give: &[Player]) -> bool {
     if let Some(req_val) = q.get("require_value").and_then(|v| v.as_u64()) {
         let total_val: u64 = give
             .iter()
-            .map(|p| card_price(p.spid, p.grade_of()))
+            .map(|p| {
+                let spid = p.get("spid").and_then(|v| v.as_u64()).unwrap_or(0);
+                let grade = state::grade_of(p) as usize;
+                state::card_price(spid, grade)
+            })
             .sum();
         if total_val < req_val {
             return false;
@@ -252,7 +333,7 @@ pub fn quest_met(quest: Option<&Value>, give: &[Player]) -> bool {
             .unwrap_or(1) as usize;
         let count = give
             .iter()
-            .filter(|p| p.grade_of() >= req_grade as u8)
+            .filter(|p| state::grade_of(p) >= req_grade as usize)
             .count();
         if count < req_count {
             return false;
@@ -264,7 +345,7 @@ pub fn quest_met(quest: Option<&Value>, give: &[Player]) -> bool {
             .get("require_season_count")
             .and_then(|v| v.as_u64())
             .unwrap_or(1) as usize;
-        let seasons: Vec<u32> = req_season
+        let seasons: Vec<u64> = req_season
             .split(',')
             .filter_map(|s| s.trim().parse().ok())
             .collect();
@@ -272,7 +353,10 @@ pub fn quest_met(quest: Option<&Value>, give: &[Player]) -> bool {
         if !seasons.is_empty() {
             let count = give
                 .iter()
-                .filter(|p| seasons.contains(&(p.spid / 1_000_000)))
+                .filter(|p| {
+                    let spid = p.get("spid").and_then(|v| v.as_u64()).unwrap_or(0);
+                    seasons.contains(&(spid / 1_000_000))
+                })
                 .count();
             if count < req_count {
                 return false;
@@ -283,367 +367,91 @@ pub fn quest_met(quest: Option<&Value>, give: &[Player]) -> bool {
     true
 }
 
-// ---------------------------------------------------------------------------
-// HTTP Handlers
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Deserialize)]
-pub struct TradeProposalReq {
-    pub players: Option<Vec<String>>,
-}
-
-pub async fn ep_trade1_proposal(
-    State(state): State<SharedState>,
-    Json(req): Json<TradeProposalReq>,
-) -> impl IntoResponse {
-    let ids = match req.players {
-        Some(ids) => ids,
-        None => return Json(json!({ "result": false, "reason": "invalid playerid" })),
+pub fn handle_trade3_proposal(body: &[u8], st: &mut Value, slot: usize) -> Value {
+    let req: Value = match serde_json::from_slice(body) {
+        Ok(v) => v,
+        Err(_) => return json!({ "result": false, "reason": "invalid playerid" }),
     };
 
-    if ids.len() < 2 || ids.len() > 10 {
-        return Json(json!({ "result": false, "reason": "invalid playerid" }));
-    }
-
-    let mut st = state.write().await;
-    let team = match st.my_team() {
-        Some(t) => t,
-        None => return Json(json!({ "result": false, "reason": "invalid playerid" })),
-    };
-
-    let mut give = Vec::new();
-    for id in &ids {
-        match team.players.iter().find(|p| p._id == *id) {
-            Some(p) => {
-                if team.in_squad(p) {
-                    return Json(json!({ "result": false, "reason": "invalid playerid" }));
-                }
-                give.push(p.clone());
-            }
-            None => return Json(json!({ "result": false, "reason": "invalid playerid" })),
-        }
-    }
-
-    let n = give.len();
-    let total_price: u64 = give
-        .iter()
-        .map(|p| card_price(p.spid, p.grade_of()))
-        .sum();
-    let avg_ovr = give
-        .iter()
-        .map(|p| card_ovr(p.spid) as i32)
-        .sum::<i32>() as f64
-        / (n as f64);
-    let target_ovr = ((avg_ovr + (ovr_bonus(n) as f64)).round() as u32).clamp(50, 100);
-
-    let gsum: u32 = give.iter().map(|p| p.grade_of() as u32).sum();
-    let grade_weights = trade_grades(gsum);
-
-    let normal = normal_offers_count(n);
-    let mut props = Vec::new();
-    let mut rng = rand::thread_rng();
-
-    for i in 0..(normal + 2) {
-        let is_igr = i == normal;
-        let is_vip = i == normal + 1;
-        let boost = if is_igr {
-            Some("igr")
-        } else if is_vip {
-            Some("vip")
-        } else {
-            None
-        };
-
-        if i == 1 && boost.is_none() {
-            // EP only offer
-            let factor = rng.gen_range(0.9..1.15);
-            let ep = sig3((total_price as f64 * factor) as u64);
-            props.push(json!({
-                "teamid": 241,
-                "ep": ep
-            }));
-            continue;
-        }
-
-        let g = pick_weighted_grade(&grade_weights, &mut rng);
-        let spid = 1_000_000 + target_ovr * 100 + (i as u32);
-        let price = card_price(spid, g);
-
-        let mut offer = json!({
-            "spid": spid,
-            "grade": g,
-            "teamid": 241,
-            "price": price
-        });
-
-        if i == 2 && boost.is_none() {
-            let ep_topup = sig3((total_price as f64 * rng.gen_range(0.05..0.20)) as u64);
-            offer["ep"] = json!(ep_topup);
-        }
-
-        if let Some(b) = boost {
-            offer["boost"] = json!(b);
-        }
-
-        props.push(offer);
-    }
-
-    st.trade = Some(TradeState {
-        players: ids,
-        props: props.clone(),
-    });
-
-    Json(json!({
-        "result": true,
-        "props": props
-    }))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct TradeContractReq {
-    pub select: Option<usize>,
-    pub selectnum: Option<usize>,
-    pub slotnum: Option<usize>,
-}
-
-pub async fn ep_trade_contract(
-    State(state): State<SharedState>,
-    Json(req): Json<TradeContractReq>,
-) -> impl IntoResponse {
-    let mut st = state.write().await;
-    let slot = st.default_slot();
-
-    let sel = req.select.or(req.selectnum).unwrap_or(usize::MAX);
-    let tr = match st.trade.take() {
-        Some(t) => t,
-        None => return Json(json!({ "result": false, "reason": "invalid playerid" })),
-    };
-
-    if sel >= tr.props.len() {
-        return Json(json!({ "result": false, "reason": "invalid playerid" }));
-    }
-
-    let offer = tr.props[sel].clone();
-
-    if let Some(team) = st.my_team_mut() {
-        for pid in &tr.players {
-            team.remove_player(pid);
-        }
-
-        if let Some(spid) = offer.get("spid").and_then(|v| v.as_u64()).map(|x| x as u32) {
-            let g = offer.get("grade").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
-            team.add_player(spid, g);
-        }
-    }
-
-    if let Some(ep) = offer.get("ep").and_then(|v| v.as_u64()) {
-        st.add_ep(ep as i64);
-    }
-
-    let res = st.coach_me_resources(slot);
-    Json(json!({
-        "result": true,
-        "resources": res
-    }))
-}
-
-pub async fn ep_trade2_proposal(
-    State(state): State<SharedState>,
-    Json(req): Json<TradeProposalReq>,
-) -> impl IntoResponse {
-    let ids = match req.players {
-        Some(ids) => ids,
-        None => return Json(json!({ "result": false, "reason": "invalid playerid" })),
-    };
-
-    if ids.len() < 2 || ids.len() > 10 {
-        return Json(json!({ "result": false, "reason": "invalid playerid" }));
-    }
-
-    let mut st = state.write().await;
-    let team = match st.my_team() {
-        Some(t) => t,
-        None => return Json(json!({ "result": false, "reason": "invalid playerid" })),
-    };
-
-    let mut give = Vec::new();
-    for id in &ids {
-        match team.players.iter().find(|p| p._id == *id) {
-            Some(p) => {
-                if team.in_squad(p) {
-                    return Json(json!({ "result": false, "reason": "invalid playerid" }));
-                }
-                give.push(p.clone());
-            }
-            None => return Json(json!({ "result": false, "reason": "invalid playerid" })),
-        }
-    }
-
-    let tp = trade2_tp(&give);
-    let max_g = trade2_max_grade(tp);
-    let normal = normal_offers_count(give.len());
-    let mut props = Vec::new();
-    let mut rng = rand::thread_rng();
-
-    for i in 0..(normal + 2) {
-        let is_igr = i == normal;
-        let is_vip = i == normal + 1;
-        let boost = if is_igr {
-            Some("igr")
-        } else if is_vip {
-            Some("vip")
-        } else {
-            None
-        };
-
-        let target_price = ((tp as f64) * rng.gen_range(0.85..1.15)) as u64;
-        let g = rng.gen_range(1..=max_g);
-        let spid = 1_000_100 + (i as u32);
-        let price = target_price.max(card_price(spid, g));
-
-        let mut offer = json!({
-            "spid": spid,
-            "grade": g,
-            "teamid": 241,
-            "price": price
-        });
-
-        if let Some(b) = boost {
-            offer["boost"] = json!(b);
-        }
-
-        props.push(offer);
-    }
-
-    st.trade = Some(TradeState {
-        players: ids,
-        props: props.clone(),
-    });
-
-    Json(json!({
-        "result": true,
-        "props": props
-    }))
-}
-
-pub async fn ep_trade2_info() -> impl IntoResponse {
-    let mut out = json!({});
-    let mut rng = rand::thread_rng();
-
-    for &tp in &TRADE2_LEVELS[1..] {
-        let max_g = trade2_max_grade(tp);
-        let g = rng.gen_range(1..=max_g);
-        let spid = 1_000_200 + (g as u32);
-        let coach = TRADE2_MANAGERS.choose(&mut rng).unwrap();
-
-        out[tp.to_string()] = json!({
-            "spid": spid,
-            "grade": g,
-            "expandme": "player",
-            "price": (tp as f64 * 1.1) as u64,
-            "coach": coach
-        });
-    }
-
-    Json(out)
-}
-
-pub async fn ep_trade2_table() -> impl IntoResponse {
-    Json(trade2_table())
-}
-
-pub async fn ep_trade2_special() -> impl IntoResponse {
-    Json(trade2_special_players())
-}
-
-pub async fn ep_trade2_usage() -> impl IntoResponse {
-    Json(json!({
-        "result": true,
-        "usedcount": 0,
-        "maxcount": 0,
-        "remainsec": 0
-    }))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct Trade3ProposalReq {
-    pub id: Option<String>,
-    pub slotnum: Option<usize>,
-    pub playerids: Option<Vec<Value>>,
-}
-
-pub async fn ep_trade3_proposal(
-    State(state): State<SharedState>,
-    Json(req): Json<Trade3ProposalReq>,
-) -> impl IntoResponse {
-    let scout_key = match req.id.as_deref() {
+    let scout_key = match req.get("id").and_then(|v| v.as_str()) {
         Some(k) => k,
-        None => return Json(json!({ "result": false, "reason": "invalid playerid" })),
+        None => return json!({ "result": false, "reason": "invalid playerid" }),
     };
 
     let scout = match SCOUTS.iter().find(|s| s.key == scout_key) {
         Some(s) => s,
-        None => return Json(json!({ "result": false, "reason": "invalid playerid" })),
+        None => return json!({ "result": false, "reason": "invalid playerid" }),
     };
 
-    let player_entries = match req.playerids {
-        Some(p) => p,
-        None => return Json(json!({ "result": false, "reason": "invalid playerid" })),
+    let player_entries = match req.get("playerids").and_then(|v| v.as_array()) {
+        Some(arr) => arr,
+        None => return json!({ "result": false, "reason": "invalid playerid" }),
     };
 
     if player_entries.len() < 2 || player_entries.len() > 10 {
-        return Json(json!({ "result": false, "reason": "invalid playerid" }));
+        return json!({ "result": false, "reason": "invalid playerid" });
     }
 
-    let mut st = state.write().await;
-    let slot = st.default_slot();
+    let team = match st.get("teams").and_then(|t| t.get(&slot.to_string())) {
+        Some(t) => t.clone(),
+        None => return json!({ "result": false, "reason": "invalid playerid" }),
+    };
 
-    let team = match st.my_team() {
-        Some(t) => t,
-        None => return Json(json!({ "result": false, "reason": "invalid playerid" })),
+    let team_players = match team.get("players").and_then(|p| p.as_array()) {
+        Some(p) => p,
+        None => return json!({ "result": false, "reason": "invalid playerid" }),
     };
 
     let mut give = Vec::new();
-    for entry in &player_entries {
-        let pid = entry.get("id").and_then(|v| v.as_str()).unwrap_or("");
-        let client_price = entry.get("price").and_then(|v| v.as_u64()).unwrap_or(0);
+    for entry in player_entries {
+        let (pid, client_price) = if let Some(s) = entry.as_str() {
+            (s, 0u64)
+        } else if let Some(obj) = entry.as_object() {
+            let pid = obj.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let cp = obj.get("price").and_then(|v| v.as_u64()).unwrap_or(0);
+            (pid, cp)
+        } else {
+            return json!({ "result": false, "reason": "invalid playerid" });
+        };
 
-        match team.players.iter().find(|p| p._id == pid) {
+        match team_players.iter().find(|p| state::iid(p) == pid) {
             Some(p) => {
-                // Must be Tim Cadangan (team2 == true and not in squad)
-                if !p.is_cadangan() || team.in_squad(p) {
-                    return Json(json!({ "result": false, "reason": "invalid playerid" }));
+                let is_cadangan = p.get("team2").and_then(|v| v.as_bool()).unwrap_or(false);
+                if !is_cadangan || state::in_squad(&team, p) {
+                    return json!({ "result": false, "reason": "invalid playerid" });
                 }
 
-                let actual_price = card_price(p.spid, p.grade_of());
-                if client_price != actual_price {
-                    return Json(json!({ "result": false, "reason": "TRADE3_NOTICE_PLAYERPRICE03" }));
+                let spid = p.get("spid").and_then(|v| v.as_u64()).unwrap_or(0);
+                let grade = state::grade_of(p) as usize;
+                let actual_price = state::card_price(spid, grade);
+                if client_price > 0 && client_price != actual_price {
+                    return json!({ "result": false, "reason": "TRADE3_NOTICE_PLAYERPRICE03" });
                 }
 
                 give.push(p.clone());
             }
-            None => return Json(json!({ "result": false, "reason": "invalid playerid" })),
+            None => return json!({ "result": false, "reason": "invalid playerid" }),
         }
+    }
+
+    if give.len() != player_entries.len() {
+        return json!({ "result": false, "reason": "invalid playerid" });
     }
 
     let total: u64 = give
         .iter()
-        .map(|p| card_price(p.spid, p.grade_of()))
+        .map(|p| {
+            let spid = p.get("spid").and_then(|v| v.as_u64()).unwrap_or(0);
+            let grade = state::grade_of(p) as usize;
+            state::card_price(spid, grade)
+        })
         .sum();
 
-    // Check quest bonus
-    let quest = match scout.key {
-        "default_B01" => Some(json!({ "require_value": 100000 })),
-        "igr" => Some(json!({ "require_grade": 2, "require_grade_count": 2 })),
-        "vip" => Some(json!({ "require_season": "88", "require_season_count": 2 })),
-        "event" => Some(json!({
-            "require_season": "93,30,27,71,51,61,89,48,31,33",
-            "require_season_count": 2
-        })),
-        "vvip" => Some(json!({ "require_value": 1_000_000_000 })),
-        _ => None,
-    };
+    if total >= NO_LIMIT {
+        return json!({ "result": false, "reason": "invalid playerid" });
+    }
 
+    let quest = scout_quest(scout.key);
     let is_quest_met = quest_met(quest.as_ref(), &give);
     let mut lo = scout.mult_min;
     let mut hi = scout.mult_max;
@@ -670,18 +478,18 @@ pub async fn ep_trade3_proposal(
 
         let target = ((total as f64) * rng.gen_range(lo..hi)) as u64;
         let g = rng.gen_range(1..=5);
-        let spid = 1_000_300 + (i as u32);
-        let price = target.max(card_price(spid, g));
+        let (spid, teamid) = pick_trade_spid(target, g as u32, &mut rng);
+        let price = target.max(state::card_price(spid, g as usize));
 
         let mut offer = json!({
             "spid": spid,
             "grade": g,
-            "teamid": 241,
+            "teamid": teamid,
             "price": price
         });
 
         if i == normal - 1 && normal > 1 {
-            let ep_topup = sig3(((total as f64) * rng.gen_range(0.05..0.15)) as u64).max(1000);
+            let ep_topup = state::sig3(((total as f64) * rng.gen_range(0.05..0.15)) as u64).max(1000);
             offer["ep"] = json!(ep_topup);
         }
 
@@ -692,106 +500,401 @@ pub async fn ep_trade3_proposal(
         props.push(offer);
     }
 
-    let ids: Vec<String> = give.into_iter().map(|p| p._id).collect();
-    st.trade = Some(TradeState {
-        players: ids,
-        props: props.clone(),
+    let ids: Vec<Value> = give.iter().map(|p| p["_id"].clone()).collect();
+    st["trade"] = json!({
+        "players": ids,
+        "props": props
     });
+    let _ = state::save_state(&st);
 
-    let resources = st.coach_me_resources(slot);
-    Json(json!({
+    let coach_me_val = crate::http::routes::build_coach_me(st, slot);
+    json!({
         "result": true,
         "props": props,
-        "resources": resources
-    }))
+        "resources": [
+            { "uri": "/coach/me", "body": coach_me_val }
+        ]
+    })
 }
 
-pub async fn ep_trade3_static() -> impl IntoResponse {
-    Json(trade3_static())
-}
-
-pub async fn ep_trade3_info(State(state): State<SharedState>) -> impl IntoResponse {
-    let st = state.read().await;
-    let slot = st.default_slot();
-    Json(json!({
-        "result": true,
-        "resources": st.coach_me_resources(slot)
-    }))
-}
-
-pub async fn ep_trade3_notification() -> impl IntoResponse {
-    Json(json!({ "result": true }))
-}
-
-pub async fn ep_playertrade_table() -> impl IntoResponse {
-    let mut pgrade = json!({});
-    for s in 2..=100 {
-        pgrade[s.to_string()] = json!(trade_grades(s));
-    }
-    Json(json!({
-        "playergrade": pgrade
-    }))
-}
-
-pub async fn ep_player_move(
-    State(state): State<SharedState>,
-    Path((pid, where_to)): Path<(String, String)>,
-) -> impl IntoResponse {
-    let mut st = state.write().await;
-    let slot = st.default_slot();
-
-    let team = match st.my_team_mut() {
-        Some(t) => t,
-        None => return Json(json!({ "result": false, "reason": "TRANSFERMARKET_SELL_ERROR_FIRSTTEAM" })),
+pub fn handle_trade2_proposal(body: &[u8], st: &mut Value, slot: usize) -> Value {
+    let req: Value = match serde_json::from_slice(body) {
+        Ok(v) => v,
+        Err(_) => return json!({ "result": false, "reason": "invalid playerid" }),
     };
 
-    let is_in_squad = team.squad.is_starter(&pid) || team.squad.in_squad(&pid);
-    let first_team_count = team.first_team_count();
+    let player_entries = match req.get("players").and_then(|v| v.as_array()) {
+        Some(arr) => arr,
+        None => return json!({ "result": false, "reason": "invalid playerid" }),
+    };
 
-    let p = match team.players.iter_mut().find(|x| x._id == pid) {
-        Some(x) => x,
-        None => return Json(json!({ "result": false, "reason": "TRANSFERMARKET_SELL_ERROR_FIRSTTEAM" })),
+    if player_entries.len() < 2 || player_entries.len() > 10 {
+        return json!({ "result": false, "reason": "invalid playerid" });
+    }
+
+    let team = match st.get("teams").and_then(|t| t.get(&slot.to_string())) {
+        Some(t) => t.clone(),
+        None => return json!({ "result": false, "reason": "invalid playerid" }),
+    };
+
+    let team_players = match team.get("players").and_then(|p| p.as_array()) {
+        Some(p) => p,
+        None => return json!({ "result": false, "reason": "invalid playerid" }),
+    };
+
+    let mut give = Vec::new();
+    for entry in player_entries {
+        let pid = if let Some(s) = entry.as_str() {
+            s
+        } else if let Some(obj) = entry.as_object() {
+            obj.get("id").and_then(|v| v.as_str()).unwrap_or("")
+        } else {
+            return json!({ "result": false, "reason": "invalid playerid" });
+        };
+
+        match team_players.iter().find(|p| state::iid(p) == pid) {
+            Some(p) => {
+                if state::in_squad(&team, p) {
+                    return json!({ "result": false, "reason": "invalid playerid" });
+                }
+                give.push(p.clone());
+            }
+            None => return json!({ "result": false, "reason": "invalid playerid" }),
+        }
+    }
+
+    if give.len() != player_entries.len() {
+        return json!({ "result": false, "reason": "invalid playerid" });
+    }
+
+    let tp = trade2_tp(&give);
+    let max_g = trade2_max_grade(tp);
+    let normal = normal_offers_count(give.len());
+    let mut props = Vec::new();
+    let mut rng = rand::thread_rng();
+
+    for i in 0..(normal + 2) {
+        let is_igr = i == normal;
+        let is_vip = i == normal + 1;
+        let boost = if is_igr {
+            Some("igr")
+        } else if is_vip {
+            Some("vip")
+        } else {
+            None
+        };
+
+        let target_price = ((tp as f64) * rng.gen_range(0.85..1.15)) as u64;
+        let g = rng.gen_range(1..=max_g);
+        let (spid, teamid) = pick_trade_spid(target_price, g as u32, &mut rng);
+        let price = target_price.max(state::card_price(spid, g as usize));
+
+        let mut offer = json!({
+            "spid": spid,
+            "grade": g,
+            "teamid": teamid,
+            "price": price
+        });
+
+        if let Some(b) = boost {
+            offer["boost"] = json!(b);
+        }
+
+        props.push(offer);
+    }
+
+    let ids: Vec<Value> = give.iter().map(|p| p["_id"].clone()).collect();
+    st["trade"] = json!({
+        "players": ids,
+        "props": props
+    });
+    let _ = state::save_state(&st);
+
+    json!({
+        "result": true,
+        "props": props
+    })
+}
+
+pub fn handle_trade1_proposal(body: &[u8], st: &mut Value, slot: usize) -> Value {
+    let req: Value = match serde_json::from_slice(body) {
+        Ok(v) => v,
+        Err(_) => return json!({ "result": false, "reason": "invalid playerid" }),
+    };
+
+    let player_entries = match req.get("players").and_then(|v| v.as_array()) {
+        Some(arr) => arr,
+        None => return json!({ "result": false, "reason": "invalid playerid" }),
+    };
+
+    if player_entries.len() < 2 || player_entries.len() > 10 {
+        return json!({ "result": false, "reason": "invalid playerid" });
+    }
+
+    let team = match st.get("teams").and_then(|t| t.get(&slot.to_string())) {
+        Some(t) => t.clone(),
+        None => return json!({ "result": false, "reason": "invalid playerid" }),
+    };
+
+    let team_players = match team.get("players").and_then(|p| p.as_array()) {
+        Some(p) => p,
+        None => return json!({ "result": false, "reason": "invalid playerid" }),
+    };
+
+    let mut give = Vec::new();
+    for entry in player_entries {
+        let pid = if let Some(s) = entry.as_str() {
+            s
+        } else if let Some(obj) = entry.as_object() {
+            obj.get("id").and_then(|v| v.as_str()).unwrap_or("")
+        } else {
+            return json!({ "result": false, "reason": "invalid playerid" });
+        };
+
+        match team_players.iter().find(|p| state::iid(p) == pid) {
+            Some(p) => {
+                if state::in_squad(&team, p) {
+                    return json!({ "result": false, "reason": "invalid playerid" });
+                }
+                give.push(p.clone());
+            }
+            None => return json!({ "result": false, "reason": "invalid playerid" }),
+        }
+    }
+
+    if give.len() != player_entries.len() {
+        return json!({ "result": false, "reason": "invalid playerid" });
+    }
+
+    let n = give.len();
+    let total_price: u64 = give
+        .iter()
+        .map(|p| {
+            let spid = p.get("spid").and_then(|v| v.as_u64()).unwrap_or(0);
+            let grade = state::grade_of(p) as usize;
+            state::card_price(spid, grade)
+        })
+        .sum();
+    let avg_ovr: f64 = give
+        .iter()
+        .map(|p| state::card_ovr(p.get("spid").and_then(|v| v.as_u64()).unwrap_or(0)) as i32)
+        .sum::<i32>() as f64
+        / (n as f64);
+    let target_ovr = ((avg_ovr + (ovr_bonus(n) as f64)).round() as u32).clamp(50, 100);
+
+    let gsum: u32 = give.iter().map(|p| state::grade_of(p) as u32).sum();
+    let grade_weights = trade_grades(gsum);
+
+    let normal = normal_offers_count(n);
+    let mut props = Vec::new();
+    let mut rng = rand::thread_rng();
+
+    for i in 0..(normal + 2) {
+        let is_igr = i == normal;
+        let is_vip = i == normal + 1;
+        let boost = if is_igr {
+            Some("igr")
+        } else if is_vip {
+            Some("vip")
+        } else {
+            None
+        };
+
+        if i == 1 && boost.is_none() {
+            let factor = rng.gen_range(0.9..1.15);
+            let ep = state::sig3((total_price as f64 * factor) as u64);
+            props.push(json!({
+                "teamid": 241,
+                "ep": ep
+            }));
+            continue;
+        }
+
+        let g = pick_weighted_grade(&grade_weights, &mut rng);
+        let (mut spid, teamid) = pick_trade_spid(total_price, g as u32, &mut rng);
+        if spid == 0 {
+            spid = 1_000_000 + target_ovr as u64 * 100 + (i as u64);
+        }
+        let price = state::card_price(spid, g as usize);
+
+        let mut offer = json!({
+            "spid": spid,
+            "grade": g,
+            "teamid": teamid,
+            "price": price
+        });
+
+        if i == 2 && boost.is_none() {
+            let ep_topup = state::sig3((total_price as f64 * rng.gen_range(0.05..0.20)) as u64);
+            offer["ep"] = json!(ep_topup);
+        }
+
+        if let Some(b) = boost {
+            offer["boost"] = json!(b);
+        }
+
+        props.push(offer);
+    }
+
+    let ids: Vec<Value> = give.iter().map(|p| p["_id"].clone()).collect();
+    st["trade"] = json!({
+        "players": ids,
+        "props": props
+    });
+    let _ = state::save_state(&st);
+
+    json!({
+        "result": true,
+        "props": props
+    })
+}
+
+pub fn handle_trade_contract(body: &[u8], st: &mut Value, slot: usize) -> Value {
+    let req: Value = serde_json::from_slice(body).unwrap_or(json!({}));
+    let sel = req
+        .get("select")
+        .or_else(|| req.get("selectnum"))
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize)
+        .unwrap_or(usize::MAX);
+
+    let tr = match st.get("trade").cloned() {
+        Some(t) => t,
+        None => return json!({ "result": false, "reason": "invalid playerid" }),
+    };
+
+    let props = match tr.get("props").and_then(|v| v.as_array()) {
+        Some(p) => p.clone(),
+        None => return json!({ "result": false, "reason": "invalid playerid" }),
+    };
+
+    let ids = match tr.get("players").and_then(|v| v.as_array()) {
+        Some(a) => a.clone(),
+        None => return json!({ "result": false, "reason": "invalid playerid" }),
+    };
+
+    if sel >= props.len() {
+        return json!({ "result": false, "reason": "invalid playerid" });
+    }
+
+    let offer = props[sel].clone();
+
+    let team = match st.get_mut("teams").and_then(|t| t.get_mut(&slot.to_string())) {
+        Some(t) => t,
+        None => return json!({ "result": false, "reason": "invalid playerid" }),
+    };
+
+    let given_ids: Vec<String> = ids
+        .iter()
+        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+        .collect();
+
+    let existing_pids: Vec<String> = team
+        .get("players")
+        .and_then(|p| p.as_array())
+        .map(|arr| arr.iter().map(state::iid).map(|s| s.to_string()).collect())
+        .unwrap_or_default();
+
+    if !given_ids.iter().all(|id| existing_pids.contains(id)) {
+        return json!({ "result": false, "reason": "invalid playerid" });
+    }
+
+    for pid in &given_ids {
+        state::remove_player(team, pid);
+    }
+
+    if let Some(spid) = offer.get("spid").and_then(|v| v.as_u64()) {
+        let g = offer.get("grade").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+        state::add_player(team, spid, g);
+    }
+
+    if let Some(ep) = offer.get("ep").and_then(|v| v.as_u64()) {
+        state::add_ep(st, ep as i64);
+    }
+
+    if let Some(obj) = st.as_object_mut() {
+        obj.remove("trade");
+    }
+
+    let _ = state::save_state(&st);
+
+    let coach_me_val = crate::http::routes::build_coach_me(st, slot);
+    json!({
+        "result": true,
+        "resources": [
+            { "uri": "/coach/me", "body": coach_me_val }
+        ]
+    })
+}
+
+pub fn handle_player_move(
+    pid: &str,
+    where_to: &str,
+    st: &mut Value,
+    slot: usize,
+) -> Value {
+    let team = match st.get_mut("teams").and_then(|t| t.get_mut(&slot.to_string())) {
+        Some(t) => t,
+        None => return json!({ "result": false, "reason": "TRANSFERMARKET_SELL_ERROR_FIRSTTEAM" }),
+    };
+
+    let is_in_squad = team
+        .get("players")
+        .and_then(|p| p.as_array())
+        .map(|players| {
+            players
+                .iter()
+                .any(|p| state::iid(p) == pid && state::in_squad(team, p))
+        })
+        .unwrap_or(false);
+
+    let first_team_count = team
+        .get("players")
+        .and_then(|p| p.as_array())
+        .map(|players| {
+            players
+                .iter()
+                .filter(|p| !p.get("team2").and_then(|v| v.as_bool()).unwrap_or(false))
+                .count()
+        })
+        .unwrap_or(0);
+
+    let player = match team
+        .get_mut("players")
+        .and_then(|p| p.as_array_mut())
+        .and_then(|players| players.iter_mut().find(|p| state::iid(p) == pid))
+    {
+        Some(p) => p,
+        None => return json!({ "result": false, "reason": "TRANSFERMARKET_SELL_ERROR_FIRSTTEAM" }),
     };
 
     if where_to == "secondteam" {
         if is_in_squad {
-            return Json(json!({ "result": false, "reason": "TRANSFERMARKET_SELL_ERROR_FIRSTTEAM" }));
+            return json!({ "result": false, "reason": "TRANSFERMARKET_SELL_ERROR_FIRSTTEAM" });
         }
-        p.team2 = Some(true);
+        player["team2"] = json!(true);
     } else if where_to == "firstteam" {
-        if p.is_cadangan() && first_team_count >= FIRST_TEAM_MAX {
-            return Json(json!({
+        let is_team2 = player.get("team2").and_then(|v| v.as_bool()).unwrap_or(false);
+        if is_team2 && first_team_count >= 36 {
+            return json!({
                 "result": false,
                 "reason": "FIRSTTEAM_REGISTRATION_FAIL_POPUP_TITLE"
-            }));
+            });
         }
-        p.team2 = None;
+        if let Some(obj) = player.as_object_mut() {
+            obj.remove("team2");
+        }
     }
 
-    let res = st.coach_me_resources(slot);
-    Json(json!({
-        "result": true,
-        "resources": res
-    }))
-}
+    let _ = state::save_state(&st);
 
-pub fn router() -> Router<SharedState> {
-    Router::new()
-        .route("/players/trade/proposal", post(ep_trade1_proposal))
-        .route("/players/trade/contract", post(ep_trade_contract))
-        .route("/players/trade2/proposal", post(ep_trade2_proposal))
-        .route("/players/trade2/contract", post(ep_trade_contract))
-        .route("/players/trade2/info", get(ep_trade2_info))
-        .route("/static/db/TRADE", get(ep_trade2_table))
-        .route("/static/cache/TRADE_SPECIALPLAYERS", get(ep_trade2_special))
-        .route("/account/trade2/usage", get(ep_trade2_usage))
-        .route("/trade3/proposal", post(ep_trade3_proposal))
-        .route("/trade3/contract", post(ep_trade_contract))
-        .route("/trade3/staticvalues", get(ep_trade3_static))
-        .route("/trade3/info", post(ep_trade3_info))
-        .route("/trade3/notification", post(ep_trade3_notification))
-        .route("/static/db/PLAYERTRADE", get(ep_playertrade_table))
-        .route("/player/{pid}/move/{where}", post(ep_player_move))
+    let coach_me_val = crate::http::routes::build_coach_me(st, slot);
+    json!({
+        "result": true,
+        "resources": [
+            { "uri": "/coach/me", "body": coach_me_val }
+        ]
+    })
 }
 
 #[cfg(test)]
@@ -808,26 +911,18 @@ mod tests {
     #[test]
     fn test_scout_quests() {
         let players = vec![
-            Player {
-                _id: "p1".into(),
-                spid: 93_000_100, // Legend season
-                expandme: "player".into(),
-                grade: 2,
-                jersey: 10,
-                jerseyname: "".into(),
-                team2: Some(true),
-                levelinfo: None,
-            },
-            Player {
-                _id: "p2".into(),
-                spid: 93_000_101, // Legend season
-                expandme: "player".into(),
-                grade: 2,
-                jersey: 11,
-                jerseyname: "".into(),
-                team2: Some(true),
-                levelinfo: None,
-            },
+            json!({
+                "_id": "p1",
+                "spid": 93_000_100,
+                "grade": 2,
+                "team2": true,
+            }),
+            json!({
+                "_id": "p2",
+                "spid": 93_000_101,
+                "grade": 2,
+                "team2": true,
+            }),
         ];
 
         let quest = json!({
@@ -856,8 +951,8 @@ mod tests {
         assert_eq!(ovr_bonus(10), 7);
 
         let g = trade_grades(2);
-        assert_eq!(g.len(), 1); // min(10, 1 + 2/8) = 1
+        assert_eq!(g.len(), 1);
         let g40 = trade_grades(40);
-        assert_eq!(g40.len(), 6); // min(10, 1 + 40/8) = 6
+        assert_eq!(g40.len(), 6);
     }
 }

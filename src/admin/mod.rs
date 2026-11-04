@@ -133,6 +133,7 @@ fn handle_players(_params: &HashMap<String, Value>) -> Result<Value, String> {
             None => "RES",
         };
         let team2 = x.get("team2").and_then(|v| v.as_bool()).unwrap_or(false);
+        let pinfo = state::player_levelinfo(x);
         out.push(json!({
             "id": id,
             "spid": spid,
@@ -142,7 +143,10 @@ fn handle_players(_params: &HashMap<String, Value>) -> Result<Value, String> {
             "grade": g,
             "price": price,
             "role": role,
-            "team2": team2
+            "team2": team2,
+            "level": pinfo["level"],
+            "exp": pinfo["exp"],
+            "to": pinfo["to"]
         }));
     }
     Ok(json!({"players": out}))
@@ -274,6 +278,77 @@ fn handle_player_grade(params: &HashMap<String, Value>) -> Result<Value, String>
     }
     state::save_state(&st).map_err(|e| e.to_string())?;
     Ok(json!({"ok": true}))
+}
+
+fn handle_player_exp(params: &HashMap<String, Value>) -> Result<Value, String> {
+    let mut st = state::load_state();
+    let id = params
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or("Cần có id")?;
+    let exp = as_int(
+        params.get("exp").ok_or("Cần có điểm kinh nghiệm (exp)")?,
+        1,
+        1_000_000,
+        "điểm kinh nghiệm",
+    )? as u64;
+
+    let team = state::my_team_mut(&mut st);
+    if let Some((prev, cur)) = state::gain_team_player_exp(team, id, exp) {
+        state::save_state(&st).map_err(|e| e.to_string())?;
+        Ok(json!({
+            "ok": true,
+            "id": id,
+            "prev": prev,
+            "current": cur
+        }))
+    } else {
+        Err("Không tìm thấy cầu thủ".to_string())
+    }
+}
+
+fn handle_player_level(params: &HashMap<String, Value>) -> Result<Value, String> {
+    let mut st = state::load_state();
+    let id = params
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or("Cần có id")?;
+    let level = as_int(
+        params.get("level").ok_or("Cần có cấp độ (level)")?,
+        1,
+        state::PLAYER_MAX_LEVEL as i64,
+        "cấp độ",
+    )? as u32;
+
+    let team = state::my_team_mut(&mut st);
+    let mut found = false;
+    let mut new_info = json!({});
+    if let Some(players) = team.get_mut("players").and_then(|p| p.as_array_mut()) {
+        for p in players {
+            if state::iid(p) == id {
+                new_info = json!({
+                    "level": level,
+                    "exp": 0,
+                    "to": state::player_need(level)
+                });
+                if let Some(obj) = p.as_object_mut() {
+                    obj.insert("levelinfo".to_string(), new_info.clone());
+                }
+                found = true;
+                break;
+            }
+        }
+    }
+    if found {
+        state::save_state(&st).map_err(|e| e.to_string())?;
+        Ok(json!({
+            "ok": true,
+            "id": id,
+            "levelinfo": new_info
+        }))
+    } else {
+        Err("Không tìm thấy cầu thủ".to_string())
+    }
 }
 
 fn handle_player_remove(params: &HashMap<String, Value>) -> Result<Value, String> {
@@ -660,6 +735,8 @@ pub async fn admin_handler(
         "ep" => handle_ep(&params),
         "player_add" => handle_player_add(&params),
         "player_grade" => handle_player_grade(&params),
+        "player_exp" => handle_player_exp(&params),
+        "player_level" => handle_player_level(&params),
         "player_remove" => handle_player_remove(&params),
         "player_team" => handle_player_team(&params),
         "give_pack" => handle_give_pack(&params),
