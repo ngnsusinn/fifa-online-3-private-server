@@ -2,6 +2,7 @@ use std::env;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let args: Vec<String> = env::args().collect();
     let tls = args.iter().any(|a| a == "--tls");
     let mut port = if tls { 443 } else { 8080 };

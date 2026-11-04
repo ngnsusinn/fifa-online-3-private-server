@@ -11,6 +11,7 @@ pub async fn run_http_server(
     port: u16,
     tls: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let app = create_http_router();
 
