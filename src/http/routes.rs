@@ -260,6 +260,18 @@ fn get_patterns() -> &'static Vec<(Regex, &'static str)> {
                 Regex::new(r"^/match/([0-9a-f]+)$").unwrap(),
                 "match_get",
             ),
+            (
+                Regex::new(r"^/lockerroom/(\w+)/itemset/?$").unwrap(),
+                "lockerroom_itemset",
+            ),
+            (
+                Regex::new(r"^/lockerroom/(\w+)/jersey/?$").unwrap(),
+                "lockerroom_jersey",
+            ),
+            (
+                Regex::new(r"^/events/rewards/(\w+)/?$").unwrap(),
+                "events_rewards_type",
+            ),
         ]
     })
 }
@@ -343,60 +355,35 @@ pub fn build_coach_me(st: &mut Value, slot: usize) -> Value {
             "teamgrade": 4.5
         }));
 
-    let squad_val = team.get("squad").cloned().unwrap_or_else(|| json!({
+    let mut squad_val = team.get("squad").cloned().unwrap_or_else(|| json!({
         "positions": [],
         "kickers": ["", "", "", "", ""],
         "captain": ""
     }));
 
-    if team.get("captain").is_none() || team["captain"].as_str().map(|s| s.is_empty()).unwrap_or(true) {
-        if let Some(cap) = squad_val.get("captain") {
-            team["captain"] = cap.clone();
+    if squad_val.get("positions").and_then(|v| v.as_array()).map(|a| a.is_empty()).unwrap_or(true) {
+        if let Some(players) = team.get("players").and_then(|p| p.as_array()) {
+            state::fill_squad(&mut squad_val, players);
         }
-    }
-    if team.get("kickers").is_none() || team["kickers"].as_array().map(|a| a.is_empty()).unwrap_or(true) {
-        if let Some(k) = squad_val.get("kickers") {
-            team["kickers"] = k.clone();
-        }
-    }
-    if team.get("presetidx").is_none() {
-        team["presetidx"] = json!(0);
-    }
-    if team.get("formations").is_none() {
-        team["formations"] = json!([]);
-    }
-    if team.get("staffs").is_none() {
-        team["staffs"] = json!([]);
-    }
-    if team.get("staffroles").is_none() {
-        team["staffroles"] = json!([]);
-    }
-    if team.get("staffroleidx").is_none() {
-        team["staffroleidx"] = json!(0);
-    }
-    if team.get("maxstaff").is_none() || team.get("maxstaff") == Some(&json!(0)) {
-        team["maxstaff"] = json!(100);
-    }
-    if team.get("staffsmc").is_none() {
-        team["staffsmc"] = json!({});
     }
 
-    if let Some(t) = st.get_mut("teams").and_then(|ts| ts.get_mut(&slot.to_string())) {
-        if t.get("staffs").is_none() {
-            t["staffs"] = json!([]);
-        }
-        if t.get("staffroles").is_none() {
-            t["staffroles"] = json!([]);
-        }
-        if t.get("staffroleidx").is_none() {
-            t["staffroleidx"] = json!(0);
-        }
-        if t.get("maxstaff").is_none() || t.get("maxstaff") == Some(&json!(0)) {
-            t["maxstaff"] = json!(100);
-        }
-        if t.get("staffsmc").is_none() {
-            t["staffsmc"] = json!({});
-        }
+    let cap_val = squad_val.get("captain").cloned().unwrap_or(json!(""));
+    let kick_val = squad_val.get("kickers").cloned().unwrap_or(json!([]));
+    let formations_val = state::get_formations();
+
+    team["squad"] = squad_val.clone();
+    team["captain"] = cap_val;
+    team["kickers"] = kick_val;
+    team["presetidx"] = json!(0);
+    team["formations"] = formations_val;
+    team["staffs"] = json!([]);
+    team["staffroles"] = state::default_staffroles();
+    team["staffroleidx"] = json!(1);
+    team["maxstaff"] = json!(100);
+    team["staffsmc"] = json!(0);
+
+    if let Some(ts) = st.get_mut("teams").and_then(|t| t.as_object_mut()) {
+        ts.insert(slot.to_string(), team.clone());
     }
 
     json!({
@@ -858,10 +845,12 @@ fn handle_exact_or_pattern(
         }
         "/game/my/team/captain" => {
             let mut st = state::load_state();
+            let slot = state::default_slot(&st);
             if method == Method::PUT || method == Method::POST {
                 if let Ok(req) = serde_json::from_slice::<Value>(body) {
                     if let Some(id) = req.get("id").and_then(|v| v.as_str()) {
                         let team = state::my_team_mut(&mut st);
+                        team["captain"] = json!(id);
                         if let Some(sq) = team.get_mut("squad") {
                             sq["captain"] = json!(id);
                         }
@@ -869,7 +858,13 @@ fn handle_exact_or_pattern(
                     }
                 }
             }
-            Some(json!({"result": true}))
+            let coach_me_val = build_coach_me(&mut st, slot);
+            Some(json!({
+                "result": true,
+                "resources": [
+                    {"uri": "/coach/me", "body": coach_me_val}
+                ]
+            }))
         }
         "/events" => Some(json!({
             "events": [
@@ -1080,6 +1075,33 @@ fn handle_exact_or_pattern(
             "teamColors": crate::http::team_color::get_all_team_colors(),
             "teamColorSpecials": {}
         })),
+        "/static/db/LOCKERROOMITEM" => Some(crate::http::lockerroom::get_lockerroom_items().clone()),
+        "/achievement/me" => {
+            let now = Utc::now().timestamp_millis();
+            Some(json!({
+                "result": true,
+                "summary": { "done": 0, "total": 0 },
+                "achievement": [],
+                "achievements": [],
+                "quest": [],
+                "questbank": {
+                    "expire": now + 7 * 86400 * 1000,
+                    "list": []
+                }
+            }))
+        },
+        "/static/info/request" => Some(json!({
+            "expire": {
+                "current": "2030-01-01T00:00:00.000Z",
+                "next": "2030-01-08T00:00:00.000Z"
+            },
+            "current": [],
+            "next": []
+        })),
+        "/contact/club" => Some(json!({
+            "result": true,
+            "members": []
+        })),
         "/static/db/EXPPLAYER" => Some(state::get_expplayer()),
         "/static/db/EXPCOACH" => Some(state::get_expcoach()),
         "/static/db/STATICVALUES/max_coachlevel" => Some(json!(100)),
@@ -1208,7 +1230,7 @@ fn handle_exact_or_pattern(
                             let mut st = state::load_state();
                             let slot = state::default_slot(&st);
                             match state::use_item_or_pack(&mut st, slot, item_id) {
-                                Ok((player_val, _)) => {
+                                Ok((player_val, extra_val)) => {
                                     let _ = state::save_state(&st);
                                     let coach_me_val = build_coach_me(&mut st, slot);
                                     let mut resp = json!({
@@ -1219,6 +1241,13 @@ fn handle_exact_or_pattern(
                                     });
                                     if !player_val.is_null() {
                                         resp["player"] = player_val;
+                                    }
+                                    if let Some(extra) = extra_val {
+                                        if let Some(obj) = extra.as_object() {
+                                            for (k, v) in obj {
+                                                resp[k] = v.clone();
+                                            }
+                                        }
                                     }
                                     Some(resp)
                                 }
@@ -1421,6 +1450,7 @@ fn handle_exact_or_pattern(
                         "team_kickers" => {
                             let idx = caps.get(1).map(|m| m.as_str()).unwrap_or("0").parse::<usize>().unwrap_or(0);
                             let mut st = state::load_state();
+                            let slot = state::default_slot(&st);
                             if method == Method::PUT || method == Method::POST {
                                 if let Ok(req) = serde_json::from_slice::<Value>(body) {
                                     if let Some(id) = req.get("id").and_then(|v| v.as_str()) {
@@ -1431,13 +1461,49 @@ fn handle_exact_or_pattern(
                                                 kickers.push(json!(""));
                                             }
                                             kickers[idx] = json!(id);
-                                            sq["kickers"] = Value::Array(kickers);
+                                            sq["kickers"] = Value::Array(kickers.clone());
+                                            team["kickers"] = Value::Array(kickers);
                                         }
                                         let _ = state::save_state(&st);
                                     }
                                 }
                             }
-                            Some(json!({"result": true}))
+                            let coach_me_val = build_coach_me(&mut st, slot);
+                            Some(json!({
+                                "result": true,
+                                "resources": [
+                                    {"uri": "/coach/me", "body": coach_me_val}
+                                ]
+                            }))
+                        }
+                        "lockerroom_itemset" => {
+                            let pid = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                            let mut st = state::load_state();
+                            let slot = state::default_slot(&st);
+                            crate::http::lockerroom::handle_lockerroom_itemset(pid, body, &mut st, slot)
+                        }
+                        "lockerroom_jersey" => {
+                            let pid = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                            let mut st = state::load_state();
+                            let slot = state::default_slot(&st);
+                            crate::http::lockerroom::handle_lockerroom_jersey(pid, body, &mut st, slot)
+                        }
+                        "events_rewards_type" => {
+                            let r_type = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                            let mut st = state::load_state();
+                            let slot = state::default_slot(&st);
+                            if r_type == "daily" {
+                                state::daily_login(&mut st);
+                                let _ = state::save_state(&st);
+                            }
+                            let coach_me_val = build_coach_me(&mut st, slot);
+                            Some(json!({
+                                "result": true,
+                                "resources": [
+                                    {"uri": "/coach/me", "body": coach_me_val},
+                                    {"uri": "/bag", "body": state::bag_list(&st)}
+                                ]
+                            }))
                         }
                         "coach_create" => {
                             let slot: usize = caps.get(1).map(|m| m.as_str()).unwrap_or("0").parse().unwrap_or(0);

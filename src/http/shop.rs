@@ -34,32 +34,34 @@ pub struct UseItemDef {
     pub item_type: &'static str,
     pub price: u64,
     pub description: &'static str,
+    pub min_ep: u64,
+    pub max_ep: u64,
 }
 
 pub const USE_ITEMS: &[UseItemDef] = &[
-    UseItemDef { itemid: 501, name: "Lucky EP", icon: "501", item_type: "EP_LOTTERY", price: 50_000, description: "Buka kartu: dapat 10.000 - 1.000.000 EP." },
-    UseItemDef { itemid: 50029, name: "Lucky EP max 20.000.000", icon: "ID50029", item_type: "EP_LOTTERY", price: 1_000_000, description: "Buka kartu: dapat 100.000 - 20.000.000 EP." },
-    UseItemDef { itemid: 50028, name: "Lucky EP max 50.000.000", icon: "ID50028", item_type: "EP_LOTTERY", price: 2_500_000, description: "Buka kartu: dapat 200.000 - 50.000.000 EP." },
-    UseItemDef { itemid: 908, name: "Jutawan EP Lottery", icon: "908", item_type: "EP_LOTTERY", price: 3_000_000, description: "Undian EP: 1 - 10 juta EP." },
-    UseItemDef { itemid: 50019, name: "EP +200.000", icon: "ID50019", item_type: "EP_LOTTERY", price: 200_000, description: "Langsung dapat 200.000 EP." },
-    UseItemDef { itemid: 50020, name: "EP +500.000", icon: "ID50020", item_type: "EP_LOTTERY", price: 500_000, description: "Langsung dapat 500.000 EP." },
-    UseItemDef { itemid: 50021, name: "EP +1.000.000", icon: "ID50021", item_type: "EP_LOTTERY", price: 1_000_000, description: "Langsung dapat 1.000.000 EP." },
-    UseItemDef { itemid: 50840, name: "Kantong EP", icon: "ID50840", item_type: "EP_LOTTERY", price: 1_500_000, description: "Isi 500.000 - 5.000.000 EP." },
-    UseItemDef { itemid: 50841, name: "Peti EP", icon: "ID50841", item_type: "EP_LOTTERY", price: 10_000_000, description: "Isi 5 - 30 juta EP." },
-    UseItemDef { itemid: 119082304, name: "Mesin Jackpot EP", icon: "119082304", item_type: "EP_LOTTERY", price: 5_000_000, description: "Jackpot: 100.000 - 100.000.000 EP." },
-    UseItemDef { itemid: 50121, name: "Kotak Platinum", icon: "ID50121GP", item_type: "ITEM_LOTTERY", price: 10_000_000, description: "Hadiah acak: World Best 5, World Legend Top 30, Top 300, This Season Top 10 atau 10 juta EP." },
-    UseItemDef { itemid: 50122, name: "Kotak Emas", icon: "ID50122GP", item_type: "ITEM_LOTTERY", price: 5_000_000, description: "Hadiah acak: World Best 50 2017, This Season Top 20 atau 3 juta EP." },
-    UseItemDef { itemid: 50123, name: "Kotak Perak", icon: "ID50123GP", item_type: "ITEM_LOTTERY", price: 2_000_000, description: "Hadiah acak: pak FW/MF/DF 65+ atau 1 juta EP." },
-    UseItemDef { itemid: 50124, name: "Kotak Perunggu", icon: "ID50124GP", item_type: "ITEM_LOTTERY", price: 500_000, description: "Hadiah acak: pak FW/MF/DF 60+ atau 300.000 EP." },
-    UseItemDef { itemid: 50125, name: "Kotak Metal", icon: "ID50125GP", item_type: "ITEM_LOTTERY", price: 200_000, description: "Hadiah acak: pak 07 Top 200 atau 100.000 EP." },
-    UseItemDef { itemid: 200130000, name: "Kotak Hadiah Perak", icon: "200130000", item_type: "ITEM_LOTTERY", price: 1_000_000, description: "Hadiah acak: 200.000 EP, pak GK 60+ atau World Best 300 2017." },
-    UseItemDef { itemid: 200130001, name: "Kotak Hadiah Emas", icon: "200130001", item_type: "ITEM_LOTTERY", price: 3_000_000, description: "Hadiah acak: 1 juta EP, 06-11 Player Top 50 atau This Season Top 30." },
-    UseItemDef { itemid: 3002, name: "Ganti nama manager", icon: "3002", item_type: "COACHNAME_CHANGE", price: 500_000, description: "Ganti nama manager Anda." },
-    UseItemDef { itemid: 3001, name: "Ganti tim", icon: "3001", item_type: "TEAM_CHANGE", price: 100_000, description: "Pindah ke klub lain (logo, seragam, liga); pemain tetap." },
-    UseItemDef { itemid: 1000052, name: "Enhancement Boost Gold", icon: "1000002", item_type: "ENHANCEMENT_BOOST", price: 1_500_000, description: "Upgrade: peluang sukses +15%." },
-    UseItemDef { itemid: 1000053, name: "Enhancement Boost Silver", icon: "1000002", item_type: "ENHANCEMENT_BOOST", price: 1_000_000, description: "Upgrade: peluang sukses +10%." },
-    UseItemDef { itemid: 1000054, name: "Enhancement Boost Bronze", icon: "1000002", item_type: "ENHANCEMENT_BOOST", price: 500_000, description: "Upgrade: peluang sukses +5%." },
-    UseItemDef { itemid: 2001, name: "Simulasi Liga", icon: "2001", item_type: "LEAGUE_SIMULATION", price: 50_000, description: "Liga: hasil satu pertandingan langsung, tanpa main." },
+    UseItemDef { itemid: 501, name: "Lucky EP", icon: "501", item_type: "EP_LOTTERY", price: 50_000, description: "Buka kartu: dapat 10.000 - 1.000.000 EP.", min_ep: 10_000, max_ep: 1_000_000 },
+    UseItemDef { itemid: 50029, name: "Lucky EP max 20.000.000", icon: "ID50029", item_type: "EP_LOTTERY", price: 1_000_000, description: "Buka kartu: dapat 100.000 - 20.000.000 EP.", min_ep: 100_000, max_ep: 20_000_000 },
+    UseItemDef { itemid: 50028, name: "Lucky EP max 50.000.000", icon: "ID50028", item_type: "EP_LOTTERY", price: 2_500_000, description: "Buka kartu: dapat 200.000 - 50.000.000 EP.", min_ep: 200_000, max_ep: 50_000_000 },
+    UseItemDef { itemid: 908, name: "Jutawan EP Lottery", icon: "908", item_type: "EP_LOTTERY", price: 3_000_000, description: "Undian EP: 1 - 10 juta EP.", min_ep: 1_000_000, max_ep: 10_000_000 },
+    UseItemDef { itemid: 50019, name: "EP +200.000", icon: "ID50019", item_type: "EP_LOTTERY", price: 200_000, description: "Langsung dapat 200.000 EP.", min_ep: 200_000, max_ep: 200_000 },
+    UseItemDef { itemid: 50020, name: "EP +500.000", icon: "ID50020", item_type: "EP_LOTTERY", price: 500_000, description: "Langsung dapat 500.000 EP.", min_ep: 500_000, max_ep: 500_000 },
+    UseItemDef { itemid: 50021, name: "EP +1.000.000", icon: "ID50021", item_type: "EP_LOTTERY", price: 1_000_000, description: "Langsung dapat 1.000.000 EP.", min_ep: 1_000_000, max_ep: 1_000_000 },
+    UseItemDef { itemid: 50840, name: "Kantong EP", icon: "ID50840", item_type: "EP_LOTTERY", price: 1_500_000, description: "Isi 500.000 - 5.000.000 EP.", min_ep: 500_000, max_ep: 5_000_000 },
+    UseItemDef { itemid: 50841, name: "Peti EP", icon: "ID50841", item_type: "EP_LOTTERY", price: 10_000_000, description: "Isi 5 - 30 juta EP.", min_ep: 5_000_000, max_ep: 30_000_000 },
+    UseItemDef { itemid: 119082304, name: "Mesin Jackpot EP", icon: "119082304", item_type: "EP_LOTTERY", price: 5_000_000, description: "Jackpot: 100.000 - 100.000.000 EP.", min_ep: 100_000, max_ep: 100_000_000 },
+    UseItemDef { itemid: 50121, name: "Kotak Platinum", icon: "ID50121GP", item_type: "ITEM_LOTTERY", price: 10_000_000, description: "Hadiah acak: World Best 5, World Legend Top 30, Top 300, This Season Top 10 atau 10 juta EP.", min_ep: 0, max_ep: 0 },
+    UseItemDef { itemid: 50122, name: "Kotak Emas", icon: "ID50122GP", item_type: "ITEM_LOTTERY", price: 5_000_000, description: "Hadiah acak: World Best 50 2017, This Season Top 20 atau 3 juta EP.", min_ep: 0, max_ep: 0 },
+    UseItemDef { itemid: 50123, name: "Kotak Perak", icon: "ID50123GP", item_type: "ITEM_LOTTERY", price: 2_000_000, description: "Hadiah acak: pak FW/MF/DF 65+ hoặc 1 triệu EP.", min_ep: 0, max_ep: 0 },
+    UseItemDef { itemid: 50124, name: "Kotak Perunggu", icon: "ID50124GP", item_type: "ITEM_LOTTERY", price: 500_000, description: "Hadiah acak: pak FW/MF/DF 60+ hoặc 300.000 EP.", min_ep: 0, max_ep: 0 },
+    UseItemDef { itemid: 50125, name: "Kotak Metal", icon: "ID50125GP", item_type: "ITEM_LOTTERY", price: 200_000, description: "Hadiah acak: pak 07 Top 200 hoặc 100.000 EP.", min_ep: 0, max_ep: 0 },
+    UseItemDef { itemid: 200130000, name: "Kotak Hadiah Perak", icon: "200130000", item_type: "ITEM_LOTTERY", price: 1_000_000, description: "Hadiah acak: 200.000 EP, pak GK 60+ hoặc World Best 300 2017.", min_ep: 0, max_ep: 0 },
+    UseItemDef { itemid: 200130001, name: "Kotak Hadiah Emas", icon: "200130001", item_type: "ITEM_LOTTERY", price: 3_000_000, description: "Hadiah acak: 1 triệu EP, 06-11 Player Top 50 hoặc This Season Top 30.", min_ep: 0, max_ep: 0 },
+    UseItemDef { itemid: 3002, name: "Ganti nama manager", icon: "3002", item_type: "COACHNAME_CHANGE", price: 500_000, description: "Ganti nama manager Anda.", min_ep: 0, max_ep: 0 },
+    UseItemDef { itemid: 3001, name: "Ganti tim", icon: "3001", item_type: "TEAM_CHANGE", price: 100_000, description: "Pindah ke klub lain (logo, seragam, liga); pemain tetap.", min_ep: 0, max_ep: 0 },
+    UseItemDef { itemid: 1000052, name: "Enhancement Boost Gold", icon: "1000002", item_type: "ENHANCEMENT_BOOST", price: 1_500_000, description: "Upgrade: peluang sukses +15%.", min_ep: 0, max_ep: 0 },
+    UseItemDef { itemid: 1000053, name: "Enhancement Boost Silver", icon: "1000002", item_type: "ENHANCEMENT_BOOST", price: 1_000_000, description: "Upgrade: peluang sukses +10%.", min_ep: 0, max_ep: 0 },
+    UseItemDef { itemid: 1000054, name: "Enhancement Boost Bronze", icon: "1000002", item_type: "ENHANCEMENT_BOOST", price: 500_000, description: "Upgrade: peluang sukses +5%.", min_ep: 0, max_ep: 0 },
+    UseItemDef { itemid: 2001, name: "Simulasi Liga", icon: "2001", item_type: "LEAGUE_SIMULATION", price: 50_000, description: "Liga: hasil satu pertandingan langsung, tanpa main.", min_ep: 0, max_ep: 0 },
 ];
 
 #[derive(Debug, Clone)]
@@ -317,6 +319,12 @@ pub fn item_def(itemid: u64) -> Value {
                 {"bunch": 10, "price": (it.price as f64 * 9.5) as u64}
             ]
         });
+        if it.item_type == "EP_LOTTERY" {
+            d["count"] = json!({
+                "min": it.min_ep,
+                "max": it.max_ep
+            });
+        }
         match it.itemid {
             50121 => {
                 d["availables"] = json!([

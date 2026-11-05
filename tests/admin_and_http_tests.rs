@@ -370,10 +370,10 @@ async fn test_http_router_and_fallbacks() {
     assert!(val_me.get("limits").is_some());
     assert_eq!(val_me["limits"]["firstTeam"], 36);
     assert_eq!(val_me["team"]["staffs"], json!([]));
-    assert_eq!(val_me["team"]["staffroles"], json!([]));
-    assert_eq!(val_me["team"]["staffroleidx"], 0);
+    assert_eq!(val_me["team"]["staffroles"], fo3_server::state::default_staffroles());
+    assert_eq!(val_me["team"]["staffroleidx"], 1);
     assert_eq!(val_me["team"]["maxstaff"], 100);
-    assert_eq!(val_me["team"]["staffsmc"], json!({}));
+    assert_eq!(val_me["team"]["staffsmc"], json!(0));
 
     // 12. Test /coach/0/default returns resources with body.id
     let req_default = Request::builder()
@@ -598,10 +598,10 @@ async fn test_staff_system_and_endpoints() {
     // 1. Check get_default_team contains staff fields
     let team = fo3_server::state::get_default_team(1);
     assert_eq!(team["staffs"], json!([]));
-    assert_eq!(team["staffroles"], json!([]));
-    assert_eq!(team["staffroleidx"], 0);
+    assert_eq!(team["staffroles"], fo3_server::state::default_staffroles());
+    assert_eq!(team["staffroleidx"], 1);
     assert_eq!(team["maxstaff"], 100);
-    assert_eq!(team["staffsmc"], json!({}));
+    assert_eq!(team["staffsmc"], json!(0));
 
     // 2. GET /staff/status/expand
     let req_expand = Request::builder()
@@ -659,10 +659,10 @@ async fn test_staff_system_and_endpoints() {
     let bytes_me = to_bytes(resp_me.into_body(), usize::MAX).await.unwrap();
     let val_me: Value = serde_json::from_slice(&bytes_me).unwrap();
     assert_eq!(val_me["team"]["staffs"], json!([]));
-    assert_eq!(val_me["team"]["staffroles"], json!([]));
-    assert_eq!(val_me["team"]["staffroleidx"], 0);
+    assert_eq!(val_me["team"]["staffroles"], fo3_server::state::default_staffroles());
+    assert_eq!(val_me["team"]["staffroleidx"], 1);
     assert_eq!(val_me["team"]["maxstaff"], 100);
-    assert_eq!(val_me["team"]["staffsmc"], json!({}));
+    assert_eq!(val_me["team"]["staffsmc"], json!(0));
 }
 
 #[tokio::test]

@@ -1,8 +1,47 @@
 use std::env;
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
+
+static LOG_FILE: OnceLock<Arc<Mutex<File>>> = OnceLock::new();
+static LATEST_LOG_FILE: OnceLock<Arc<Mutex<File>>> = OnceLock::new();
+
+fn init_logging() {
+    let _ = fs::create_dir_all("logs");
+    let now = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+    let filename = format!("logs/server_{}.txt", now);
+    if let Ok(f) = OpenOptions::new().create(true).append(true).open(&filename) {
+        let _ = LOG_FILE.set(Arc::new(Mutex::new(f)));
+    }
+    if let Ok(f) = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open("logs/server_latest.txt")
+    {
+        let _ = LATEST_LOG_FILE.set(Arc::new(Mutex::new(f)));
+    }
+}
+
+fn log_output(line: &str) {
+    print!("{}", line);
+    let _ = io::stdout().flush();
+    if let Some(f_mutex) = LOG_FILE.get() {
+        if let Ok(mut f) = f_mutex.lock() {
+            let _ = f.write_all(line.as_bytes());
+            let _ = f.flush();
+        }
+    }
+    if let Some(f_mutex) = LATEST_LOG_FILE.get() {
+        if let Ok(mut f) = f_mutex.lock() {
+            let _ = f.write_all(line.as_bytes());
+            let _ = f.flush();
+        }
+    }
+}
 
 fn find_binary(name: &str) -> PathBuf {
     if let Ok(current_exe) = env::current_exe() {
@@ -29,8 +68,7 @@ fn pump_stream<R: io::Read + Send + 'static>(name: String, reader: R) {
         if n == 0 {
             break;
         }
-        print!("[{}] {}", name, line);
-        let _ = io::stdout().flush();
+        log_output(&format!("[{}] {}", name, line));
         line.clear();
     }
 }
@@ -72,6 +110,7 @@ fn shutdown_procs(procs: &mut [(String, Child)]) {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    init_logging();
     let args: Vec<String> = env::args().collect();
     let selftest = args.iter().any(|a| a == "--selftest");
 
@@ -85,21 +124,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match spawn_service("http_config", &http_args) {
         Ok(c) => procs.push(("http_config".to_string(), c)),
-        Err(e) => eprintln!("[start_all] failed to start http_config: {}", e),
+        Err(e) => log_output(&format!("[start_all] failed to start http_config: {}\n", e)),
     }
 
     match spawn_service("messenger", &[]) {
         Ok(c) => procs.push(("messenger".to_string(), c)),
-        Err(e) => eprintln!("[start_all] failed to start messenger: {}", e),
+        Err(e) => log_output(&format!("[start_all] failed to start messenger: {}\n", e)),
     }
 
     match spawn_service("server", &[]) {
         Ok(c) => procs.push(("server".to_string(), c)),
-        Err(e) => eprintln!("[start_all] failed to start server: {}", e),
+        Err(e) => log_output(&format!("[start_all] failed to start server: {}\n", e)),
     }
 
-    println!(
-        "[start_all] http_config (:443 https, admin :8088), messenger (:28002), server (:28000/:28001) up. Ctrl-C to stop."
+    log_output(
+        "[start_all] http_config (:443 https, admin :8088), messenger (:28002), server (:28000/:28001) up. Ctrl-C to stop.\n"
     );
 
     if selftest {
@@ -108,36 +147,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         for (name, p) in procs.iter_mut() {
             match p.try_wait() {
                 Ok(Some(status)) => {
-                    eprintln!("[start_all] service {} exited prematurely with {}", name, status);
+                    log_output(&format!("[start_all] service {} exited prematurely with {}\n", name, status));
                     all_alive = false;
                 }
                 Ok(None) => {}
                 Err(e) => {
-                    eprintln!("[start_all] error checking {}: {}", name, e);
+                    log_output(&format!("[start_all] error checking {}: {}\n", name, e));
                     all_alive = false;
                 }
             }
         }
         shutdown_procs(&mut procs);
         if all_alive {
-            println!("[start_all] selftest OK");
+            log_output("[start_all] selftest OK\n");
             std::process::exit(0);
         } else {
-            eprintln!("[start_all] selftest FAILED");
+            log_output("[start_all] selftest FAILED\n");
             std::process::exit(1);
         }
     }
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
-            println!("\n[start_all] received Ctrl-C, stopping...");
+            log_output("\n[start_all] received Ctrl-C, stopping...\n");
         }
         _ = async {
             loop {
                 tokio::time::sleep(Duration::from_millis(500)).await;
                 for (name, p) in procs.iter_mut() {
                     if let Ok(Some(status)) = p.try_wait() {
-                        eprintln!("[start_all] service {} exited with {}", name, status);
+                        log_output(&format!("[start_all] service {} exited with {}\n", name, status));
                         return;
                     }
                 }
@@ -146,6 +185,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     shutdown_procs(&mut procs);
-    println!("[start_all] stopped.");
+    log_output("[start_all] stopped.\n");
     Ok(())
 }

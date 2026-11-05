@@ -3,6 +3,7 @@ pub mod constants;
 pub mod cup;
 pub mod db;
 pub mod league;
+pub mod lockerroom;
 pub mod market;
 pub mod miniface;
 pub mod pricing;

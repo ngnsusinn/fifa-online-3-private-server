@@ -4,7 +4,7 @@ use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 pub static STATE_MUTEX: Mutex<()> = Mutex::new(());
@@ -213,6 +213,202 @@ pub fn new_iid() -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
+pub fn default_staffroles() -> Value {
+    let mut roles = Vec::with_capacity(7);
+    for i in 1..=7 {
+        roles.push(json!({
+            "roleidx": 1,
+            "slotidx": i,
+            "open": true,
+            "staffid": Value::Null
+        }));
+    }
+    Value::Array(roles)
+}
+
+pub fn get_formations() -> Value {
+    let candidate_paths = [
+        PathBuf::from("gamedata/formations.json"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("gamedata/formations.json"),
+    ];
+    for p in &candidate_paths {
+        if p.is_file() {
+            if let Ok(content) = fs::read_to_string(p) {
+                if let Ok(v) = serde_json::from_str::<Value>(&content) {
+                    if let Some(common) = v.get("common").cloned() {
+                        if common.as_array().map(|a| !a.is_empty()).unwrap_or(false) {
+                            return common;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    json!([
+        {
+            "formationid": 1,
+            "formationname": "4-4-2",
+            "positions": [0, 3, 4, 6, 7, 12, 13, 15, 16, 24, 26],
+            "offsets": [
+                {"x": 0.5, "y": 0.02},
+                {"x": 0.85, "y": 0.22},
+                {"x": 0.62, "y": 0.16},
+                {"x": 0.38, "y": 0.16},
+                {"x": 0.15, "y": 0.22},
+                {"x": 0.85, "y": 0.5},
+                {"x": 0.62, "y": 0.46},
+                {"x": 0.38, "y": 0.46},
+                {"x": 0.15, "y": 0.5},
+                {"x": 0.62, "y": 0.8},
+                {"x": 0.38, "y": 0.8}
+            ]
+        }
+    ])
+}
+
+pub fn fill_squad(sq: &mut Value, players: &[Value]) {
+    let default_offsets: &[(u32, f64, f64)] = &[
+        (0, 0.5, 0.02),   // GK
+        (3, 0.85, 0.22),  // RB
+        (4, 0.62, 0.16),  // RCB
+        (6, 0.38, 0.16),  // LCB
+        (7, 0.15, 0.22),  // LB
+        (12, 0.85, 0.5),  // RM
+        (13, 0.62, 0.46), // RCM
+        (15, 0.38, 0.46), // LCM
+        (16, 0.15, 0.5),  // LM
+        (24, 0.62, 0.8),  // RS
+        (26, 0.38, 0.8),  // LS
+    ];
+
+    let sq_obj = match sq.as_object_mut() {
+        Some(o) => o,
+        None => return,
+    };
+
+    if sq_obj.get("formation").is_none() || sq_obj["formation"] == json!(null) {
+        sq_obj.insert("formation".to_string(), json!(23)); // 4-4-2(1)
+    }
+
+    let mut pos_arr = sq_obj
+        .get("positions")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    // Ensure all existing entries have "id" string
+    for p in &mut pos_arr {
+        let spid = p.get("spid").and_then(|v| v.as_u64()).unwrap_or(0);
+        if p.get("id").is_none() || p["id"].as_str().map(|s| s.is_empty()).unwrap_or(true) {
+            p["id"] = json!(spid.to_string());
+        }
+    }
+
+    let taken_spids: std::collections::HashSet<u64> = pos_arr
+        .iter()
+        .filter_map(|p| p.get("spid").and_then(|v| v.as_u64()).map(|s| s % 1_000_000))
+        .collect();
+
+    // Find used starter positions (< 28)
+    let used_slots: std::collections::HashSet<u32> = pos_arr
+        .iter()
+        .filter_map(|p| p.get("pos").and_then(|v| v.as_u64()).map(|pos| pos as u32))
+        .filter(|&pos| pos < POS_SUB)
+        .collect();
+
+    let mut available_players: Vec<&Value> = players
+        .iter()
+        .filter(|p| {
+            let base_spid = p.get("spid").and_then(|v| v.as_u64()).unwrap_or(0) % 1_000_000;
+            !taken_spids.contains(&base_spid)
+        })
+        .collect();
+
+    // Fill missing starter slots
+    for &(slot_pos, _, _) in default_offsets {
+        if !used_slots.contains(&slot_pos) {
+            if let Some(p) = available_players.pop() {
+                let pid = iid(p);
+                let spid = p.get("spid").and_then(|v| v.as_u64()).unwrap_or(0);
+                pos_arr.push(json!({
+                    "id": pid,
+                    "spid": spid,
+                    "pos": slot_pos
+                }));
+            }
+        }
+    }
+
+    // Assign starting [1, 1, x, y] to all starters (< 28)
+    for p in &mut pos_arr {
+        let pos_val = p.get("pos").and_then(|v| v.as_u64()).unwrap_or(99) as u32;
+        if pos_val < POS_SUB {
+            let (x, y) = default_offsets
+                .iter()
+                .find(|&&(pp, _, _)| pp == pos_val)
+                .map(|&(_, x, y)| (x, y))
+                .unwrap_or((0.5, 0.5));
+            p["starting"] = json!([1, 1, x, y]);
+        }
+    }
+
+    // Ensure 7 substitutes (pos: 28)
+    let cur_subs = pos_arr
+        .iter()
+        .filter(|p| p.get("pos").and_then(|v| v.as_u64()).unwrap_or(99) == POS_SUB as u64)
+        .count();
+    let needed_subs = 7usize.saturating_sub(cur_subs);
+    for _ in 0..needed_subs {
+        if let Some(p) = available_players.pop() {
+            let pid = iid(p);
+            let spid = p.get("spid").and_then(|v| v.as_u64()).unwrap_or(0);
+            pos_arr.push(json!({
+                "id": pid,
+                "spid": spid,
+                "pos": POS_SUB
+            }));
+        }
+    }
+
+    // Validate and fill captain and kickers from starters
+    let xi: Vec<String> = pos_arr
+        .iter()
+        .filter(|p| p.get("pos").and_then(|v| v.as_u64()).unwrap_or(99) < POS_SUB as u64)
+        .filter_map(|p| p.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
+        .collect();
+
+    let cur_cap = sq_obj.get("captain").and_then(|v| v.as_str()).unwrap_or("");
+    if (!xi.contains(&cur_cap.to_string()) || cur_cap.is_empty()) && !xi.is_empty() {
+        let new_cap = xi.get(8).or_else(|| xi.first()).unwrap();
+        sq_obj.insert("captain".to_string(), json!(new_cap));
+    }
+
+    let mut kickers = sq_obj
+        .get("kickers")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|k| k.as_str().map(|s| s.to_string()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    while kickers.len() < 5 {
+        kickers.push(String::new());
+    }
+    kickers.truncate(5);
+
+    for (i, k) in kickers.iter_mut().enumerate() {
+        if !xi.contains(k) && !xi.is_empty() {
+            let fallback_idx = xi.len().saturating_sub(5);
+            let fallback_xi = &xi[fallback_idx..];
+            *k = fallback_xi[i % fallback_xi.len()].clone();
+        }
+    }
+    sq_obj.insert("kickers".to_string(), json!(kickers));
+    sq_obj.insert("positions".to_string(), Value::Array(pos_arr));
+}
+
 pub fn get_default_team(teamid: u64) -> Value {
     let candidate_paths = [
         format!("responses/static_info_authentic_team_all_{}.json", teamid),
@@ -264,8 +460,6 @@ pub fn get_default_team(teamid: u64) -> Value {
     }
 
     let mut squad = team.get("squad").cloned().unwrap_or(json!({}));
-    let mut cap_str = String::new();
-    let mut kick_arr = Vec::new();
 
     if let Some(sq_obj) = squad.as_object_mut() {
         if let Some(positions) = sq_obj.get_mut("positions").and_then(|v| v.as_array_mut()) {
@@ -277,37 +471,32 @@ pub fn get_default_team(teamid: u64) -> Value {
             }
         }
         if let Some(cap) = sq_obj.get("captain").and_then(|v| v.as_u64()) {
-            cap_str = cap.to_string();
-            sq_obj.insert("captain".to_string(), json!(cap_str));
-        } else if let Some(cap) = sq_obj.get("captain").and_then(|v| v.as_str()) {
-            cap_str = cap.to_string();
+            sq_obj.insert("captain".to_string(), json!(cap.to_string()));
         }
         if let Some(kickers) = sq_obj.get_mut("kickers").and_then(|v| v.as_array_mut()) {
             for k in kickers {
                 if let Some(kid) = k.as_u64() {
-                    let s = kid.to_string();
-                    kick_arr.push(json!(s.clone()));
-                    *k = json!(s);
-                } else if let Some(ks) = k.as_str() {
-                    kick_arr.push(json!(ks));
+                    *k = json!(kid.to_string());
                 }
             }
         }
     }
 
+    fill_squad(&mut squad, &players);
+
     team["players"] = Value::Array(players);
+    let cap_val = squad.get("captain").cloned().unwrap_or(json!(""));
+    let kick_val = squad.get("kickers").cloned().unwrap_or(json!([]));
     team["squad"] = squad;
-    team["captain"] = json!(cap_str);
-    team["kickers"] = Value::Array(kick_arr);
+    team["captain"] = cap_val;
+    team["kickers"] = kick_val;
     team["presetidx"] = json!(0);
     team["staffs"] = json!([]);
-    team["staffroles"] = json!([]);
-    team["staffroleidx"] = json!(0);
+    team["staffroles"] = default_staffroles();
+    team["staffroleidx"] = json!(1);
     team["maxstaff"] = json!(100);
-    team["staffsmc"] = json!({});
-    if team.get("formations").is_none() {
-        team["formations"] = json!([]);
-    }
+    team["staffsmc"] = json!(0);
+    team["formations"] = get_formations();
     team
 }
 
@@ -366,6 +555,21 @@ pub fn load_state() -> Value {
             }
             if let Some(teams) = v.get_mut("teams").and_then(|t| t.as_object_mut()) {
                 for (_k, team_val) in teams.iter_mut() {
+                    let players_clone = team_val.get("players").and_then(|p| p.as_array()).cloned().unwrap_or_default();
+                    let (cap_val, kick_val) = if let Some(sq) = team_val.get_mut("squad") {
+                        fill_squad(sq, &players_clone);
+                        (
+                            sq.get("captain").cloned().unwrap_or(json!("")),
+                            sq.get("kickers").cloned().unwrap_or(json!([])),
+                        )
+                    } else {
+                        (json!(""), json!([]))
+                    };
+                    team_val["captain"] = cap_val;
+                    team_val["kickers"] = kick_val;
+                    team_val["formations"] = get_formations();
+                    team_val["presetidx"] = json!(0);
+
                     if let Some(players) = team_val.get_mut("players").and_then(|p| p.as_array_mut()) {
                         for p in players {
                             let pinfo = player_levelinfo(p);
@@ -374,21 +578,15 @@ pub fn load_state() -> Value {
                             }
                         }
                     }
-                    if team_val.get("staffs").is_none() {
-                        team_val["staffs"] = json!([]);
+                    team_val["staffs"] = json!([]);
+                    if team_val.get("staffroles").is_none()
+                        || team_val["staffroles"].as_array().map(|a| a.is_empty()).unwrap_or(true)
+                    {
+                        team_val["staffroles"] = default_staffroles();
                     }
-                    if team_val.get("staffroles").is_none() {
-                        team_val["staffroles"] = json!([]);
-                    }
-                    if team_val.get("staffroleidx").is_none() {
-                        team_val["staffroleidx"] = json!(0);
-                    }
-                    if team_val.get("maxstaff").is_none() || team_val.get("maxstaff") == Some(&json!(0)) {
-                        team_val["maxstaff"] = json!(100);
-                    }
-                    if team_val.get("staffsmc").is_none() {
-                        team_val["staffsmc"] = json!({});
-                    }
+                    team_val["staffroleidx"] = json!(1);
+                    team_val["maxstaff"] = json!(100);
+                    team_val["staffsmc"] = json!(0);
                 }
             }
             if let Some(coaches) = v.get_mut("coaches").and_then(|c| c.as_array_mut()) {
