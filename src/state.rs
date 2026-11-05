@@ -863,6 +863,7 @@ pub fn add_player(team: &mut Value, spid: u64, grade: u32) -> Value {
         })
         .unwrap_or(0);
     let price = card_price(spid, grade as usize);
+    let is_reserve = first_team_count >= 36;
     let mut player = json!({
         "_id": id,
         "id": id,
@@ -873,10 +874,12 @@ pub fn add_player(team: &mut Value, spid: u64, grade: u32) -> Value {
         "jersey": 99,
         "jerseyname": "",
         "life": 100,
-        "levelinfo": {"level": 1, "exp": 0, "to": 100}
+        "levelinfo": {"level": 1, "exp": 0, "to": 100, "need": 100}
     });
-    if first_team_count >= 36 {
+    if is_reserve {
         player["team2"] = json!(true);
+    } else {
+        player["state"] = json!("first");
     }
     if let Some(players) = team.get_mut("players").and_then(|v| v.as_array_mut()) {
         players.push(player.clone());

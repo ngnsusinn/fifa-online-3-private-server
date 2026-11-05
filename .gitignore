@@ -1,6 +1,7 @@
 # Data extracted from or written for your own game install (not redistributable)
 gamedata/
 captures/
+logs/
 backup/
 music/
 

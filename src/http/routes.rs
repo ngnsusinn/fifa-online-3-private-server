@@ -311,26 +311,6 @@ pub fn build_coach_me(st: &mut Value, slot: usize) -> Value {
         team = state::get_default_team(teamid);
     }
 
-    if let Some(players) = team.get_mut("players").and_then(|p| p.as_array_mut()) {
-        for p in players {
-            let pinfo = state::player_levelinfo(p);
-            if let Some(obj) = p.as_object_mut() {
-                obj.insert("levelinfo".to_string(), pinfo);
-            }
-        }
-    }
-
-    if let Some(players) = team.get_mut("players").and_then(|v| v.as_array_mut()) {
-        for p in players {
-            if let Some(obj) = p.as_object_mut() {
-                let spid = obj.get("spid").and_then(|v| v.as_u64()).unwrap_or(0);
-                let grade = obj.get("grade").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                let price = state::card_price(spid, grade);
-                obj.insert("price".to_string(), json!(price));
-            }
-        }
-    }
-
     let cid = coach
         .get("_id")
         .and_then(|v| v.as_str())
@@ -367,6 +347,50 @@ pub fn build_coach_me(st: &mut Value, slot: usize) -> Value {
         }
     }
 
+    let in18: std::collections::HashSet<String> = squad_val
+        .get("positions")
+        .and_then(|p| p.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|pos| {
+                    pos.get("id")
+                        .or_else(|| pos.get("spid"))
+                        .and_then(|v| v.as_str().or_else(|| v.as_u64().map(|n| Box::leak(n.to_string().into_boxed_str()) as &str)))
+                        .map(|s| s.to_string())
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if let Some(players) = team.get_mut("players").and_then(|p| p.as_array_mut()) {
+        for p in players {
+            let pid = state::iid(p);
+            let is_team2 = p.get("team2").and_then(|v| v.as_bool()).unwrap_or(false);
+            let pinfo = state::player_levelinfo(&*p);
+            if let Some(obj) = p.as_object_mut() {
+                if !is_team2 || in18.contains(&pid) {
+                    obj.insert("state".to_string(), json!("first"));
+                    obj.remove("team2");
+                } else {
+                    obj.remove("state");
+                    obj.insert("team2".to_string(), json!(true));
+                }
+                obj.insert("levelinfo".to_string(), pinfo);
+                let spid = obj.get("spid").and_then(|v| v.as_u64()).unwrap_or(0);
+                let grade = obj.get("grade").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let price = state::card_price(spid, grade);
+                obj.insert("price".to_string(), json!(price));
+                obj.insert("life".to_string(), json!(100));
+                if obj.get("jersey").is_none() {
+                    obj.insert("jersey".to_string(), json!(99));
+                }
+                if obj.get("jerseyname").is_none() {
+                    obj.insert("jerseyname".to_string(), json!(""));
+                }
+            }
+        }
+    }
+
     let cap_val = squad_val.get("captain").cloned().unwrap_or(json!(""));
     let kick_val = squad_val.get("kickers").cloned().unwrap_or(json!([]));
     let formations_val = state::get_formations();
@@ -381,6 +405,7 @@ pub fn build_coach_me(st: &mut Value, slot: usize) -> Value {
     team["staffroleidx"] = json!(1);
     team["maxstaff"] = json!(100);
     team["staffsmc"] = json!(0);
+    team["teamsquadlist"] = json!({"preset": [squad_val.clone()]});
 
     if let Some(ts) = st.get_mut("teams").and_then(|t| t.as_object_mut()) {
         ts.insert(slot.to_string(), team.clone());

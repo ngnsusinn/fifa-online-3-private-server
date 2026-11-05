@@ -872,7 +872,10 @@ pub fn handle_player_move(
         if is_in_squad {
             return json!({ "result": false, "reason": "TRANSFERMARKET_SELL_ERROR_FIRSTTEAM" });
         }
-        player["team2"] = json!(true);
+        if let Some(obj) = player.as_object_mut() {
+            obj.insert("team2".to_string(), json!(true));
+            obj.remove("state");
+        }
     } else if where_to == "firstteam" {
         let is_team2 = player.get("team2").and_then(|v| v.as_bool()).unwrap_or(false);
         if is_team2 && first_team_count >= 36 {
@@ -883,6 +886,7 @@ pub fn handle_player_move(
         }
         if let Some(obj) = player.as_object_mut() {
             obj.remove("team2");
+            obj.insert("state".to_string(), json!("first"));
         }
     }
 
