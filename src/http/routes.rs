@@ -837,6 +837,12 @@ fn handle_exact_or_pattern(
             "result": true,
             "status": "ok"
         })),
+        "/sign/wait" | "/sign/wait/check" => Some(json!({
+            "result": true,
+            "wait": 0,
+            "resources": [{"uri": "/sign/continue", "body": {"result": true}}]
+        })),
+        "/sign/continue" => Some(json!({"result": true})),
         "/game/my/tactic/all" => {
             let st = state::load_state();
             let mut list = Vec::with_capacity(6);
@@ -1677,19 +1683,7 @@ pub async fn http_handler(
     // 5. Synchronize state operations
     let _lock = state::STATE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
 
-    // 6. Static responses/<path>.json fallback
-    if method == Method::GET && !path.starts_with("/inbox/my/messages") {
-        if let Some(file_data) = from_responses_file(path) {
-            return (
-                StatusCode::OK,
-                [(header::CONTENT_TYPE, "application/json")],
-                file_data,
-            )
-                .into_response();
-        }
-    }
-
-    // 7. Exact endpoints or pattern routes
+    // 6. Exact endpoints or pattern routes
     if let Some(val) = handle_exact_or_pattern(&method, path, query, &body, host) {
         return (
             StatusCode::OK,
@@ -1699,7 +1693,17 @@ pub async fn http_handler(
             .into_response();
     }
 
-    // 7. Unknown route fallback:
+    // 7. Static responses/<path>.json fallback
+    if let Some(file_data) = from_responses_file(path) {
+        return (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "application/json")],
+            file_data,
+        )
+            .into_response();
+    }
+
+    // 8. Unknown route fallback:
     // Unknown POST returns {"result": true}
     // Unknown GET / others return {}
     let fallback = if method == Method::POST {
