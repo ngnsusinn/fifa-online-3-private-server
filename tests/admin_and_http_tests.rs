@@ -10,9 +10,29 @@ use tower::ServiceExt;
 
 static SERIAL_TEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+struct StateGuard {
+    original_state: Option<String>,
+}
+
+impl StateGuard {
+    fn new() -> Self {
+        let original_state = std::fs::read_to_string(fo3_server::state::STATE_PATH).ok();
+        Self { original_state }
+    }
+}
+
+impl Drop for StateGuard {
+    fn drop(&mut self) {
+        if let Some(ref content) = self.original_state {
+            let _ = std::fs::write(fo3_server::state::STATE_PATH, content);
+        }
+    }
+}
+
 #[tokio::test]
 async fn test_admin_page_and_security() {
     let _test_guard = SERIAL_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let _state_backup = StateGuard::new();
     let app = create_admin_router();
     let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
 
@@ -155,6 +175,7 @@ async fn test_admin_page_and_security() {
 #[tokio::test]
 async fn test_http_router_and_fallbacks() {
     let _test_guard = SERIAL_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let _state_backup = StateGuard::new();
     {
         let mut st = fo3_server::state::load_state();
         let slot = fo3_server::state::default_slot(&st);
@@ -570,6 +591,7 @@ async fn test_http_router_and_fallbacks() {
 #[tokio::test]
 async fn test_staff_system_and_endpoints() {
     let _test_guard = SERIAL_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let _state_backup = StateGuard::new();
     let app = create_http_router();
     let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
 
@@ -646,6 +668,7 @@ async fn test_staff_system_and_endpoints() {
 #[tokio::test]
 async fn test_shop_endpoints_and_purchase() {
     let _test_guard = SERIAL_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let _state_backup = StateGuard::new();
     let app = create_http_router();
     let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
 
@@ -788,6 +811,7 @@ async fn test_shop_endpoints_and_purchase() {
 #[tokio::test]
 async fn test_miniface_cdn_and_fallback() {
     let _test_guard = SERIAL_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let _state_backup = StateGuard::new();
     let app = create_http_router();
     let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
 
@@ -847,6 +871,7 @@ async fn test_miniface_cdn_and_fallback() {
 #[tokio::test]
 async fn test_trade_system_and_flow() {
     let _test_guard = SERIAL_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let _state_backup = StateGuard::new();
     let app = create_http_router();
     let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
 
@@ -1136,6 +1161,7 @@ async fn test_trade_system_and_flow() {
 #[tokio::test]
 async fn test_transfer_price_and_player_pricing() {
     let _test_guard = SERIAL_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let _state_backup = StateGuard::new();
     let app = create_http_router();
     let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
 
@@ -1308,6 +1334,7 @@ async fn test_transfer_price_and_player_pricing() {
 #[tokio::test]
 async fn test_player_enhancement_and_pe2staticvalues() {
     let _test_guard = SERIAL_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let _state_backup = StateGuard::new();
     let app = create_http_router();
     let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
 
@@ -1500,6 +1527,7 @@ async fn test_player_enhancement_and_pe2staticvalues() {
 #[tokio::test]
 async fn test_inbox_contact_and_bag_endpoints() {
     let _test_guard = SERIAL_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let _state_backup = StateGuard::new();
     let app = create_http_router();
     let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
 
@@ -1766,6 +1794,7 @@ async fn test_inbox_contact_and_bag_endpoints() {
 #[tokio::test]
 async fn test_player_leveling_and_expplayer_endpoints() {
     let _test_guard = SERIAL_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let _state_backup = StateGuard::new();
     let app = create_http_router();
     let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
 
@@ -1977,6 +2006,7 @@ async fn test_player_leveling_and_expplayer_endpoints() {
 #[tokio::test]
 async fn test_market_endpoints_full_lifecycle() {
     let _test_guard = SERIAL_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let _state_backup = StateGuard::new();
     {
         let mut st = fo3_server::state::load_state();
         let slot = fo3_server::state::default_slot(&st);

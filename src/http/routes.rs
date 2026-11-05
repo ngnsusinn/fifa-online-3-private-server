@@ -1717,7 +1717,5 @@ pub async fn http_handler(
 }
 
 pub fn create_http_router() -> Router {
-    Router::new()
-        .merge(crate::http::upgrade::router())
-        .fallback(http_handler)
+    Router::new().fallback(http_handler)
 }

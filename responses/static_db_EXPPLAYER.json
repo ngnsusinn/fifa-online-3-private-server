@@ -1,0 +1,74 @@
+{
+  "1": {
+    "requiredplayerexp": 100
+  },
+  "2": {
+    "requiredplayerexp": 200
+  },
+  "3": {
+    "requiredplayerexp": 300
+  },
+  "4": {
+    "requiredplayerexp": 400
+  },
+  "5": {
+    "requiredplayerexp": 500
+  },
+  "6": {
+    "requiredplayerexp": 600
+  },
+  "7": {
+    "requiredplayerexp": 700
+  },
+  "8": {
+    "requiredplayerexp": 800
+  },
+  "9": {
+    "requiredplayerexp": 900
+  },
+  "10": {
+    "requiredplayerexp": 1000
+  },
+  "11": {
+    "requiredplayerexp": 1100
+  },
+  "12": {
+    "requiredplayerexp": 1200
+  },
+  "13": {
+    "requiredplayerexp": 1300
+  },
+  "14": {
+    "requiredplayerexp": 1400
+  },
+  "15": {
+    "requiredplayerexp": 1500
+  },
+  "16": {
+    "requiredplayerexp": 1600
+  },
+  "17": {
+    "requiredplayerexp": 1700
+  },
+  "18": {
+    "requiredplayerexp": 1800
+  },
+  "19": {
+    "requiredplayerexp": 1900
+  },
+  "20": {
+    "requiredplayerexp": 2000
+  },
+  "21": {
+    "requiredplayerexp": 2100
+  },
+  "22": {
+    "requiredplayerexp": 2200
+  },
+  "23": {
+    "requiredplayerexp": 2300
+  },
+  "24": {
+    "requiredplayerexp": 2400
+  }
+}

@@ -62,7 +62,8 @@ pub fn make_levelinfo(info: Option<&Value>, need: impl Fn(u32) -> u64, top: u32)
     json!({
         "level": level,
         "exp": exp,
-        "to": need(level)
+        "to": need(level),
+        "need": need(level)
     })
 }
 
@@ -90,7 +91,8 @@ pub fn gain_exp(owner: &mut Value, n: u64, need: impl Fn(u32) -> u64, top: u32) 
     let cur = json!({
         "level": level,
         "exp": exp,
-        "to": need(level)
+        "to": need(level),
+        "need": need(level)
     });
 
     if let Some(obj) = owner.as_object_mut() {
@@ -255,7 +257,7 @@ pub fn get_default_team(teamid: u64) -> Value {
             obj.insert("state".to_string(), json!("first"));
             obj.insert("grade".to_string(), json!(0));
             obj.insert("life".to_string(), json!(100));
-            obj.insert("levelinfo".to_string(), json!({"level": 1, "exp": 0, "to": 100}));
+            obj.insert("levelinfo".to_string(), json!({"level": 1, "exp": 0, "to": 100, "need": 100}));
             let price = card_price(spid, 0);
             obj.insert("price".to_string(), json!(price));
         }
